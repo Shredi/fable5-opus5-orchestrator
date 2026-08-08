@@ -197,7 +197,7 @@ Watch, don't type: a teammate's pane is its working terminal, and stray input in
 /plugin install orchestrator@fable-orchestrator
 ```
 
-Requires `python3` on PATH; macOS and Linux only — the hooks also shell out to `tmux` for teammate reaping, and Windows is not supported. No configuration needed.
+Requires `python3` on PATH. **Windows** works too: the ledger guards, the SessionStart injector, and per-session ledger binding all run unmodified — only the tmux teammate-pane features (idle reaping, watching panes live) degrade to no-ops, since there is no `tmux`/POSIX `ps` there. The default `python3` on Windows is a Microsoft Store alias that does nothing when invoked non-interactively; disable it (Settings → Apps → Advanced app settings → App execution aliases → turn off `python3.exe`) and put a real `python3` shim on `PATH` (e.g. a `python3.bat` next to `python.exe` containing `@python %*`) so the hook commands resolve. No other configuration needed on any OS.
 
 ### Manual install (without the plugin system)
 

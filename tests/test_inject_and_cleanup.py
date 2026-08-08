@@ -1,7 +1,7 @@
 import json
 import os
 
-from conftest import REPO, run_hook
+from conftest import POSIX, REPO, run_hook
 
 INJECT = "inject_instructions.py"
 CLEANUP = "cleanup_session_cache.py"
@@ -280,6 +280,7 @@ def test_marker_keeps_opus_sticky_on_null_payload(tmp_path):
     assert json.loads(marker.read_text())["model"] == "claude-opus-4-8"
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_inject_metric_records_detection_source(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -403,6 +404,7 @@ def test_legacy_marker_without_profile_never_gets_a_bare_delta(tmp_path):
     assert "Profile switch" not in text
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_switch_metric_is_distinguishable(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -421,6 +423,7 @@ def test_switch_metric_is_distinguishable(tmp_path):
     assert rec["fire"] == "resume"
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_gated_full_core_is_not_counted_as_a_switch(tmp_path):
     # A profile change delivered as a full core is NOT an inject_switch —
     # otherwise the metric would report deltas that were never sent and
@@ -436,6 +439,7 @@ def test_gated_full_core_is_not_counted_as_a_switch(tmp_path):
     assert [json.loads(l)["event"] for l in lines] == ["inject", "inject"]
 
 
+@POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
 def test_teammate_is_skipped_even_when_the_profile_switched(tmp_path):
     # A teammate never received a core, so it can never receive a delta —
     # and its marker must not claim an injection that did not happen, or
@@ -475,6 +479,7 @@ def test_plugin_root_fallback_to_script_location(tmp_path):
     assert "(FABLE profile)" in context_of(result)
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_metrics_written_when_enabled(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -564,6 +569,7 @@ def _fake_ps_env(tmp_path, argv_line):
             "CLAUDE_PLUGIN_ROOT": str(REPO)}
 
 
+@POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
 def test_teammate_session_gets_no_profile(tmp_path):
     # Teammates fire SessionStart like any session, but the profile is
     # chair-only: injected into a worker it says "you are the
@@ -581,6 +587,7 @@ def test_teammate_session_gets_no_profile(tmp_path):
     assert json.loads(cache.read_text(encoding="utf-8"))["model"] == "claude-sonnet-5"
 
 
+@POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
 def test_teammate_skip_records_metric(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -598,6 +605,7 @@ def test_teammate_skip_records_metric(tmp_path):
     assert rec["source"] == "payload"
 
 
+@POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
 def test_teammate_inject_escape_hatch(tmp_path):
     # FABLE_ORCH_TEAMMATE_INJECT=1 restores the old inject-everyone
     # behaviour, mirroring FABLE_ORCH_TEAMMATE_STOP on the close guard.
@@ -608,6 +616,7 @@ def test_teammate_inject_escape_hatch(tmp_path):
     assert "(FABLE profile)" in context_of(result)
 
 
+@POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
 def test_chair_still_injected_when_ancestor_is_plain_claude(tmp_path):
     # Same fake ps, no --agent-id: this is the chair and must keep
     # receiving the profile.
@@ -617,6 +626,7 @@ def test_chair_still_injected_when_ancestor_is_plain_claude(tmp_path):
     assert "(FABLE profile)" in context_of(result)
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_metrics_rotation_caps_the_log(tmp_path):
     home = tmp_path / "home"
     d = home / ".claude" / "fable-orch"
@@ -735,6 +745,7 @@ def _swarm_fixture(tmp_path):
     return env, kill_log
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_cleanup_reaps_own_swarm(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
     env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-s-swarm- --agent-name worker"
@@ -748,6 +759,7 @@ def test_cleanup_reaps_own_swarm(tmp_path):
     assert ps_log.is_file() and "-p 12345" in ps_log.read_text()
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_cleanup_leaves_other_sessions_swarm(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
     env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name worker"
@@ -757,6 +769,7 @@ def test_cleanup_leaves_other_sessions_swarm(tmp_path):
     assert not kill_log.exists()
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_cleanup_sweeps_idle_swarm(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
     env["FAKE_PS_OUTPUT"] = "claude --agent-id worker@session-deadbeef --agent-name worker"
@@ -766,6 +779,7 @@ def test_cleanup_sweeps_idle_swarm(tmp_path):
     assert "claude-swarm-111" in kill_log.read_text()
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_cleanup_reaps_by_ancestor_pid_socket(tmp_path):
     # Current Claude Code tags teammates with a per-team id, not the parent
     # session id — the reaper must still find OUR server via its socket
@@ -786,6 +800,7 @@ def test_cleanup_reaps_by_ancestor_pid_socket(tmp_path):
     assert "claude-swarm-111" not in text          # foreign tag + fresh: untouched
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_swarm_idle_sweep_disabled_by_zero(tmp_path):
     # MAX_IDLE_H=0 turns off the idle kill even for ancient servers;
     # own-session reaping is a separate switch and stays available.
@@ -817,6 +832,7 @@ def test_inject_started_falls_back_to_mtime_for_legacy_cache(tmp_path):
     assert abs(started - old) < 5
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_swarm_cleanup_optout(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
     env["FABLE_ORCH_SWARM_CLEANUP"] = "0"
@@ -826,6 +842,7 @@ def test_swarm_cleanup_optout(tmp_path):
     assert not kill_log.exists()
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_cleanup_unlinks_dead_socket(tmp_path):
     env, kill_log = _swarm_fixture(tmp_path)
     env["FAKE_TMUX_DEAD"] = "1"
@@ -852,6 +869,7 @@ def test_non_object_stdin_never_crashes(tmp_path):
     assert "(FABLE profile)" in context_of(result)  # still injects
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_nested_claude_does_not_kill_outer_swarm(tmp_path):
     # A nested `claude -p` (fusion helpers, scripts) ends: its hook's
     # ancestor chain CONTAINS the outer session's claude. Matching every
@@ -877,6 +895,7 @@ def test_nested_claude_does_not_kill_outer_swarm(tmp_path):
     assert "claude-swarm-500" not in text  # the outer session's team LIVES
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_session_end_kills_own_panes_in_default_server(tmp_path):
     # Current layout: teammates are panes inside the USER'S default tmux
     # server, tagged with --parent-session-id. SessionEnd must kill the
@@ -899,6 +918,7 @@ def test_session_end_kills_own_panes_in_default_server(tmp_path):
     assert not any(l.strip() == str(default_sock) for l in lines)  # no kill-server on default
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_session_end_leaves_other_sessions_panes(tmp_path):
     import time
 
@@ -915,6 +935,7 @@ def test_session_end_leaves_other_sessions_panes(tmp_path):
     assert "default" not in log  # the other session's pane lives
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_session_id_prefix_collision_does_not_kill(tmp_path):
     # Session "s-own" must not claim a teammate of "s-own-full-id":
     # the --parent-session-id match is token-exact, not substring.
@@ -933,6 +954,7 @@ def test_session_id_prefix_collision_does_not_kill(tmp_path):
     assert "default" not in log
 
 
+@POSIX  # _swarm_fixture needs POSIX shebang+chmod exec and os.getuid()
 def test_protocol_mismatch_socket_survives(tmp_path):
     # tmux binary upgraded mid-flight: the server answers rc=1 with
     # "protocol version mismatch" but is ALIVE — unlinking its socket

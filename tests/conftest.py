@@ -11,6 +11,21 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "scripts"
 
+# Windows (D2, Phase 2): the guards/injection/cleanup logic itself runs
+# fine on nt (tempfile.gettempdir(), expanduser("~"), os.path.join, no
+# shell=True), but a chunk of the SUITE exercises POSIX-only mechanics
+# that don't exist on Windows at all — os.symlink (needs elevation),
+# os.getuid()/os.geteuid() (AttributeError on nt), chmod-based permission
+# tests (nt chmod doesn't restrict reads the same way), fcntl.flock
+# correctness, HOME-based expanduser (ntpath.expanduser never reads
+# HOME), and the fake `ps`/`tmux` fixtures (POSIX shebang + chmod +x).
+# Those tests are marked POSIX rather than made to pass on Windows too —
+# the mechanics under test literally don't exist there.
+POSIX = pytest.mark.skipif(
+    os.name == "nt",
+    reason="exercises POSIX-only mechanics (symlink/getuid/chmod/flock/ps/tmux)",
+)
+
 # Env vars that would leak the host's configuration into the tests.
 STRIP_ENV = [
     "LEDGER_GUARD_THRESHOLD",

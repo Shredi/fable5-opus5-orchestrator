@@ -13,7 +13,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]  # hooks shell out to ps/tmux; BSD vs procps differs
+        # hooks shell out to ps/tmux (BSD vs procps differs); windows-latest
+        # runs the same guards/injection/cleanup with tmux-teammate features
+        # degraded to no-ops (D2) — the POSIX-only mechanics (symlink, getuid,
+        # chmod, flock, fake ps/tmux fixtures) are skipmarked in conftest.py.
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4

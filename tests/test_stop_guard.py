@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-from conftest import run_hook, write_ledger, write_marker
+from conftest import POSIX, run_hook, write_ledger, write_marker
 
 SCRIPT = "ledger_guard_stop.py"
 
@@ -129,6 +129,7 @@ def test_upward_search_stops_at_worktree_boundary(tmp_path):
     assert run_hook(SCRIPT, stop_payload(worktree), tmpdir=tmp_path) is None
 
 
+@POSIX  # env_extra={"HOME": ...} controls expanduser("~") only on posixpath
 def test_upward_search_stops_at_home(tmp_path):
     # A ledger ABOVE $HOME belongs to nobody — never holds sessions below.
     write_ledger(tmp_path, "- [ ] 1. above home\n")
@@ -140,6 +141,7 @@ def test_upward_search_stops_at_home(tmp_path):
     ) is None
 
 
+@POSIX  # env_extra={"HOME": ...} controls expanduser("~") only on posixpath
 def test_ledger_at_home_still_found(tmp_path):
     home = tmp_path / "home"
     (home / "docs").mkdir(parents=True)
@@ -182,6 +184,7 @@ def _seed_pane_state(home, cpu=5.0, since_ago=7200, stale_marker=True, key=PANE_
     return state
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_idle_teammate_pane_reaped(repo_dir, tmp_path):
     # CPU sample matches the previous one (0:05.00) and the baseline is 2h
     # old -> the pane is a finished teammate and gets killed.
@@ -194,6 +197,7 @@ def test_idle_teammate_pane_reaped(repo_dir, tmp_path):
     assert "-t %1" in log  # kill must target the PANE id, not the pid
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_active_teammate_pane_survives(repo_dir, tmp_path):
     # 1 cpu-sec over 60s (~1.7%) is above the parked rate -> active
     # worker; re-baseline, no kill.
@@ -205,6 +209,7 @@ def test_active_teammate_pane_survives(repo_dir, tmp_path):
     assert rebaselined["cpu"] == 5.0  # fresh sample, idle clock restarted
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_heartbeat_pane_still_reaped(repo_dir, tmp_path):
     # A PARKED teammate is not CPU-frozen — it polls its mailbox at
     # ~0.4%. 0.3 cpu-sec over 2h is far under the 1% rate: reaped.
@@ -217,6 +222,7 @@ def test_heartbeat_pane_still_reaped(repo_dir, tmp_path):
     assert "-t %1" in kill_log.read_text(encoding="utf-8")
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_default_server_pane_reaped(repo_dir, tmp_path):
     # Current Claude Code parks teammates in the USER'S default tmux
     # server — the sweep must scan it, and must kill only the pane.
@@ -229,6 +235,7 @@ def test_default_server_pane_reaped(repo_dir, tmp_path):
     assert "default -t %1" in log
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_first_sighting_never_reaped(repo_dir, tmp_path):
     # No prior state: the sweep only takes a baseline, never kills.
     env, kill_log, home = _pane_env(tmp_path)
@@ -238,6 +245,7 @@ def test_first_sighting_never_reaped(repo_dir, tmp_path):
     assert json.loads(state.read_text(encoding="utf-8"))["panes"][PANE_KEY]["cpu"] == 5.0
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_pane_sweep_rate_limited(repo_dir, tmp_path):
     # State file written moments ago -> the sweep is skipped entirely.
     env, kill_log, home = _pane_env(tmp_path)
@@ -246,6 +254,7 @@ def test_pane_sweep_rate_limited(repo_dir, tmp_path):
     assert not kill_log.exists()
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_legacy_pid_keyed_state_never_kills(repo_dir, tmp_path):
     # Pre-0.10 state was keyed by bare pid — with pid reuse that hands a
     # NEW pane a stale idle baseline. Old keys must not match; the pane
@@ -256,6 +265,7 @@ def test_legacy_pid_keyed_state_never_kills(repo_dir, tmp_path):
     assert not kill_log.exists()
 
 
+@POSIX  # fake ps/tmux fixtures need POSIX shebang+chmod exec and os.getuid()
 def test_wrapper_shell_pane_never_reaped(repo_dir, tmp_path):
     # Pane root is `sh -c '... claude --agent-id ...'`: the shell's CPU
     # clock is frozen while the child works — judging idleness by it
@@ -267,6 +277,7 @@ def test_wrapper_shell_pane_never_reaped(repo_dir, tmp_path):
     assert not kill_log.exists()
 
 
+@POSIX  # the real `ps -o cputime=` binary/flags don't exist on Windows
 def test_real_ps_cputime_parses():
     # The fakes never exercise the REAL ps output shape; parse our own
     # process's cputime with the actual binary on this OS (macOS + Linux).
@@ -498,6 +509,7 @@ def test_every_deadline_is_built_from_the_monotonic_clock():
         assert mod._budget(None) == 5.0, name
 
 
+@POSIX  # POSIX shebang script on PATH stands in for `ps`; chmod +x
 def test_slow_ps_cannot_swallow_the_decision(repo_dir, tmp_path):
     # Teammate detection runs BEFORE the guard prints anything, so its
     # cost is charged against the 10s hook timeout with nothing emitted
@@ -534,6 +546,7 @@ def test_per_task_ledger_name_holds_the_close(repo_dir, tmp_path):
     assert "LEDGER-tiktok-sdk-e2e.md" in result["reason"]
 
 
+@POSIX  # os.geteuid() doesn't exist on nt; chmod 0o000 doesn't restrict reads there
 def test_unreadable_ledger_does_not_mask_a_live_sibling(repo_dir, tmp_path):
     # A newer but unreadable file would win the mtime race, then fail to
     # open — and the guard would return silently, hiding the live ledger
@@ -569,6 +582,7 @@ def test_archived_ledger_stays_silent(repo_dir, tmp_path):
     assert run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path) is None
 
 
+@POSIX  # POSIX shebang script on PATH stands in for `ps`; chmod +x
 def test_teammate_close_is_never_held(repo_dir, tmp_path):
     # The ledger belongs to the chair. Holding a teammate's close on it
     # costs the teammate a turn and can eat the report it was about to
@@ -591,6 +605,7 @@ def test_teammate_close_is_never_held(repo_dir, tmp_path):
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path))
 
 
+@POSIX  # POSIX shebang script on PATH stands in for `ps`; chmod +x
 def test_chair_close_still_held_when_ancestors_are_not_agents(repo_dir, tmp_path):
     # Same fake ps, but the ancestor carries no --agent-id: this is the
     # chair, and its open ledger must still hold the close.
@@ -605,6 +620,7 @@ def test_chair_close_still_held_when_ancestors_are_not_agents(repo_dir, tmp_path
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), env_extra=env, tmpdir=tmp_path))
 
 
+@POSIX  # os.symlink needs elevation/dev-mode on Windows
 def test_symlinked_cwd_finds_the_real_ledger(tmp_path):
     # The spawn guard resolves symlinks (realpath); the stop guard must
     # too, or the two disagree about whether the session has a ledger and

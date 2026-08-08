@@ -1,7 +1,7 @@
 import json
 import time
 
-from conftest import run_hook, write_ledger, write_marker
+from conftest import POSIX, run_hook, write_ledger, write_marker
 
 SCRIPT = "ledger_guard_spawn.py"
 LONG = "x" * 2000       # above the default 1500 gate
@@ -109,6 +109,7 @@ def test_upward_search_stops_at_worktree_boundary(tmp_path):
     assert is_deny(run_hook(SCRIPT, spawn_payload(worktree)))
 
 
+@POSIX  # env_extra={"HOME": ...} controls expanduser("~") only on posixpath
 def test_upward_search_stops_at_home(tmp_path):
     # A ledger above $HOME must not satisfy the gate for sessions below it.
     write_ledger(tmp_path)
@@ -302,6 +303,7 @@ def test_type_hostile_payload_fails_open(repo_dir):
     run_hook(SCRIPT, payload)
 
 
+@POSIX  # the guarantee under test IS fcntl.flock; nt has no fcntl at all
 def test_parallel_task_creates_deny_exactly_once(repo_dir, tmp_path):
     # 8 concurrent hooks race on the sidecar; the flock serializes the
     # read-modify-write: no lost counts, exactly one deny, valid JSON.
@@ -375,6 +377,7 @@ def test_completed_ledger_without_marker_satisfies(repo_dir, tmp_path):
     assert run_hook(SCRIPT, spawn_payload(repo_dir, prompt=VERY_LONG), tmpdir=tmp_path) is None
 
 
+@POSIX  # os.symlink needs elevation/dev-mode on Windows
 def test_symlinked_cwd_finds_the_real_ledger(tmp_path):
     # cwd is a symlink into the project: the walk must climb the REAL
     # tree (realpath), or the project ledger is invisible -> false deny.
@@ -398,6 +401,7 @@ def test_negative_threshold_clamps_to_zero(repo_dir):
 
 # --- metrics + stats coverage for the task gate ---
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it
 def test_task_metrics_and_stats_summary(repo_dir, tmp_path):
     import os
     import subprocess
