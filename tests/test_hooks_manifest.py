@@ -12,8 +12,10 @@ def _manifest():
         return json.load(f)["hooks"]
 
 
-def test_all_four_events_registered():
-    assert set(_manifest()) == {"SessionStart", "PreToolUse", "Stop", "SessionEnd"}
+def test_all_five_events_registered():
+    assert set(_manifest()) == {
+        "SessionStart", "PreToolUse", "PostToolUse", "Stop", "SessionEnd",
+    }
 
 
 def test_every_hook_command_script_exists():
@@ -27,10 +29,40 @@ def test_every_hook_command_script_exists():
                 assert isinstance(hook.get("timeout"), int)
 
 
+def _matcher_for(event, tool):
+    """The matcher entry in `event` that actually matches `tool`, found by
+    CONTENT rather than positional index — a manifest that grows more than
+    one entry per event (as PostToolUse joins PreToolUse here) must not
+    silently pin whichever entry happens to sit at [0]."""
+    for entry in _manifest().get(event, []):
+        matcher = entry.get("matcher")
+        if matcher and re.compile(matcher).search(tool):
+            return matcher
+    return None
+
+
 def test_pretooluse_matcher_covers_the_gated_tools():
-    matcher = _manifest()["PreToolUse"][0]["matcher"]
+    matcher = _matcher_for("PreToolUse", "Agent")
+    assert matcher is not None, "no PreToolUse matcher covers Agent"
     pattern = re.compile(matcher)
     for tool in ("Agent", "Task", "Workflow", "TaskCreate"):
         assert pattern.search(tool), f"matcher misses {tool}"
     for tool in ("TaskUpdate", "TaskList", "AgentOutput", "WorkflowX"):
         assert not pattern.search(tool), f"matcher over-matches {tool}"
+
+
+def test_posttooluse_matcher_covers_ledger_bind():
+    matcher = _matcher_for("PostToolUse", "Write")
+    assert matcher is not None, "no PostToolUse matcher covers Write"
+    pattern = re.compile(matcher)
+    for tool in ("Write", "Edit", "MultiEdit"):
+        assert pattern.search(tool), f"matcher misses {tool}"
+    for tool in ("Read", "Bash", "NotebookEdit", "MultiEditX"):
+        assert not pattern.search(tool), f"matcher over-matches {tool}"
+
+
+def test_posttooluse_runs_ledger_bind():
+    entry = next(e for e in _manifest()["PostToolUse"]
+                 if re.compile(e["matcher"]).search("Write"))
+    commands = [h["command"] for h in entry["hooks"]]
+    assert any("ledger_bind.py" in c for c in commands)

@@ -166,9 +166,12 @@ def guard_task_create(data):
     if limit <= 0:
         return
     session_id = data.get("session_id")
-    ledger = find_ledger(data.get("cwd"))
+    bound = _bound_ledger(session_id)
+    ledger = bound or find_ledger(data.get("cwd"))
     stale = bool(ledger) and not ledger_satisfies(ledger, session_id)
     if ledger and not stale:
+        if not bound:
+            _bind_ledger(session_id, ledger)  # adoption: this session now owns it
         return
 
     path = _task_sidecar(session_id)
@@ -204,7 +207,9 @@ def guard_task_create(data):
                 "an exemption. Write the numbered Requirements Ledger to "
                 "./.workflow/LEDGER.md now, then delegate implementation to "
                 "sonnet workers citing ledger items instead of implementing "
-                "the phases yourself. Re-issue this task afterwards — this "
+                "the phases yourself. Writing it binds THIS session to that "
+                "ledger, so a concurrent session's ledger never satisfies or "
+                "blocks this one. Re-issue this task afterwards — this "
                 "reminder fires once per session."
             ),
         }
@@ -288,6 +293,77 @@ def find_ledger(start_dir):
         d = parent
 
 
+def _marker_dict(session_id):
+    """This session's injector marker as a dict, or None if there is no
+    marker file to read (manual install, or before the first SessionStart
+    fire) — callers must fall back to legacy (session-agnostic) behavior
+    in that case. An unreadable/corrupt-but-present marker still counts
+    as present, so it decodes to {} rather than None."""
+    if not session_id:
+        return None
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    cache = os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    if not os.path.isfile(cache):
+        return None
+    try:
+        with open(cache, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_marker_dict(session_id, marker):
+    """Atomic read-modify-write of the marker (tmp file + os.replace) —
+    same pattern as inject_instructions.py's cache rewrite. Best effort;
+    never raises."""
+    if not session_id:
+        return
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    cache = os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    try:
+        tmp = f"{cache}.{os.getpid()}.tmp.json"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(marker, f)
+        os.replace(tmp, cache)
+    except Exception:
+        pass
+
+
+def _bound_ledger(session_id):
+    """The ledger path this session is bound to, if the marker names one
+    AND it still exists AND is still a live-named ledger — else unbinds
+    (rewrites the marker without the key, best effort) and returns None.
+    None also covers "no marker" and "no binding recorded"."""
+    marker = _marker_dict(session_id)
+    if marker is None:
+        return None
+    ledger = marker.get("ledger")
+    if not isinstance(ledger, str) or not ledger:
+        return None
+    name = os.path.basename(ledger).lower()
+    live = (
+        name.startswith("ledger") and name.endswith(".md")
+        and name[6:7] in (".", "-", "_")
+        and not (name.endswith("-archive.md") or name.endswith("_archive.md"))
+    )
+    if live and os.path.isfile(ledger):
+        return ledger
+    marker.pop("ledger", None)
+    _write_marker_dict(session_id, marker)
+    return None
+
+
+def _bind_ledger(session_id, ledger):
+    """Bind (or rebind) this session's marker to `ledger` — best effort,
+    a no-op when there is no marker to bind onto."""
+    marker = _marker_dict(session_id)
+    if marker is None:
+        return
+    marker["ledger"] = ledger
+    _write_marker_dict(session_id, marker)
+
+
 def _session_started(session_id):
     """The session's immutable start time from the injector marker, or None."""
     if not session_id:
@@ -356,9 +432,12 @@ def _guard(data):
         return
 
     session_id = data.get("session_id")
-    ledger = find_ledger(data.get("cwd"))
+    bound = _bound_ledger(session_id)
+    ledger = bound or find_ledger(data.get("cwd"))
     stale = bool(ledger) and not ledger_satisfies(ledger, session_id)
     if ledger and not stale:
+        if not bound:
+            _bind_ledger(session_id, ledger)  # adoption: this session now owns it
         _metric("spawn_pass_over_threshold", session_id,
                 chars=len(text), threshold=limit,
                 tool=data.get("tool_name") or "")
@@ -383,7 +462,9 @@ def _guard(data):
                 f"{stale_note}. Per Dynamic Workflow Rule 1, first write the "
                 "numbered Requirements Ledger to ./.workflow/LEDGER.md "
                 "(checkbox format: '- [ ] N. <item>'), then re-spawn citing "
-                "which ledger items each agent covers. If this is genuinely a "
+                "which ledger items each agent covers. Writing it binds THIS "
+                "session to that ledger, so a concurrent session's ledger "
+                "never satisfies or blocks this one. If this is genuinely a "
                 "small single-phase task, do it directly; if it is "
                 "multi-phase, write the ledger and delegate — never keep "
                 "multi-phase work solo."

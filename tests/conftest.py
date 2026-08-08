@@ -118,3 +118,21 @@ def write_ledger(root, body="- [ ] 1. item\n"):
     d.mkdir(parents=True, exist_ok=True)
     (d / "LEDGER.md").write_text(body, encoding="utf-8")
     return d / "LEDGER.md"
+
+
+def write_marker(tmp, started=None, session="test-session", ledger=None, **extra):
+    """The injector's session marker — `started` arms the stale-ledger
+    check (omitted entirely when None, the shape of a pre-`started`
+    legacy marker); `ledger=` seeds the D1 per-session binding (a
+    str/Path to an existing ledger file) so a test can exercise
+    bound-session behavior without going through the spawn guard's
+    adoption path first. Extra kwargs land in the marker verbatim."""
+    marker = tmp / f"fable-orch-model-{session}.json"
+    body = {}
+    if started is not None:
+        body["started"] = started
+    if ledger is not None:
+        body["ledger"] = str(ledger)
+    body.update(extra)
+    marker.write_text(json.dumps(body), encoding="utf-8")
+    return marker

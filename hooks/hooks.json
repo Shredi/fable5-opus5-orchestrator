@@ -25,6 +25,19 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Write|Edit|MultiEdit)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ledger_bind.py\"",
+            "timeout": 10,
+            "statusMessage": "Ledger guard (session binding)"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

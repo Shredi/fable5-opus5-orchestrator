@@ -1,7 +1,7 @@
 import json
 import time
 
-from conftest import run_hook, write_ledger
+from conftest import run_hook, write_ledger, write_marker
 
 SCRIPT = "ledger_guard_spawn.py"
 LONG = "x" * 2000       # above the default 1500 gate
@@ -27,13 +27,6 @@ def is_deny(result):
         and result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         and result["hookSpecificOutput"]["permissionDecision"] == "deny"
     )
-
-
-def write_marker(tmp, started, session="test-session"):
-    """The injector's session marker — arms the stale-ledger check."""
-    marker = tmp / f"fable-orch-model-{session}.json"
-    marker.write_text(json.dumps({"started": started}), encoding="utf-8")
-    return marker
 
 
 def test_short_prompt_passes(repo_dir):

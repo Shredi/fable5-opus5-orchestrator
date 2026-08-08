@@ -2,7 +2,7 @@ import json
 import os
 import time
 
-from conftest import run_hook, write_ledger
+from conftest import run_hook, write_ledger, write_marker
 
 SCRIPT = "ledger_guard_stop.py"
 
@@ -85,27 +85,23 @@ def test_stale_ledger_from_before_session_passes(repo_dir, tmp_path):
 
 
 def test_ledger_touched_this_session_blocks(repo_dir, tmp_path):
-    # Session started an hour ago; the ledger was written just now -> owned.
+    # Bound to this ledger -> the close guard blocks on it directly; the
+    # binding IS the ownership decision, mtime bookkeeping is never consulted.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
-    cache.write_text(json.dumps({"profile": "fable"}), encoding="utf-8")
-    old = time.time() - 3600
-    os.utime(cache, (old, old))
+    write_marker(tmp_path, time.time() - 3600, ledger=ledger, profile="fable")
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
 
 
 def test_ownership_survives_compact_reinjection(repo_dir, tmp_path):
-    # The ledger was touched mid-session; then SessionStart re-fired on a
-    # compact and REWROTE the cache (fresh file mtime). The immutable
-    # `started` field must keep the ledger owned by this session.
+    # A bound session's close blocks on the binding regardless of the
+    # ledger's own age or the marker's `started` value — unlike the
+    # legacy mtime-ownership path, a compact re-fire that rewrites the
+    # marker cannot disown a ledger this session is bound to (the
+    # injector carries the `ledger` key forward across every rewrite).
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    mid = time.time() - 1800
-    os.utime(ledger, (mid, mid))
-    cache = tmp_path / "fable-orch-model-test-session.json"
-    cache.write_text(
-        json.dumps({"profile": "fable", "started": time.time() - 3600}),
-        encoding="utf-8",
-    )  # file mtime = now (post-compact rewrite); started = an hour ago
+    old = time.time() - 1800
+    os.utime(ledger, (old, old))
+    write_marker(tmp_path, time.time() - 3600, ledger=ledger, profile="fable")
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
 
 
@@ -339,11 +335,11 @@ def test_plus_bullet_is_out_of_dialect(repo_dir, tmp_path):
 
 
 def test_future_started_still_owns(repo_dir, tmp_path):
-    # A marker `started` in the future (clock jump) must clamp to now —
-    # not silently disown every ledger for the whole session.
-    write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
-    cache.write_text(json.dumps({"started": time.time() + 3600}), encoding="utf-8")
+    # A bound session never consults `started` for ownership at all, so a
+    # `started` in the future (clock jump) can't disown its own ledger —
+    # a strictly stronger guarantee than the legacy clamp-to-now.
+    ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
+    write_marker(tmp_path, time.time() + 3600, ledger=ledger)
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))
 
 
@@ -623,15 +619,14 @@ def test_symlinked_cwd_finds_the_real_ledger(tmp_path):
 
 
 def test_marker_touch_does_not_disown_a_started_less_marker(repo_dir, tmp_path):
-    # The warmth touch must land AFTER the ownership check. A marker with
-    # no `started` (legacy or corrupt) falls back to its own mtime; if the
-    # touch ran first it would reset that to "now" and silently disown
-    # every ledger the session had already worked on.
+    # The warmth touch must land AFTER the block decision, and a bound
+    # session's block decision never depends on the marker's own mtime —
+    # a legacy marker with no `started` field, bound to this ledger,
+    # must still block and still get warmed.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    cache = tmp_path / "fable-orch-model-test-session.json"
-    cache.write_text(json.dumps({"model": "fable"}), encoding="utf-8")
-    started = time.time() - 3600          # session began an hour ago
-    os.utime(cache, (started, started))
+    cache = write_marker(tmp_path, ledger=ledger, model="fable")
+    old = time.time() - 3600              # marker file itself looks stale
+    os.utime(cache, (old, old))
     mid = time.time() - 1800              # ledger touched mid-session
     os.utime(ledger, (mid, mid))
     assert blocks(run_hook(SCRIPT, stop_payload(repo_dir), tmpdir=tmp_path))

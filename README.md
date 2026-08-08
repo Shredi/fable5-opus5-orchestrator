@@ -107,6 +107,8 @@ Detection runs at each session start, in priority order: an explicit `FABLE_ORCH
 
 Before serious delegation the chair writes every requirement, constraint, and edge case as one checkbox line in `./.workflow/LEDGER.md` — or `LEDGER-<topic>.md` beside it when one project runs several. The hooks watch every `LEDGER*.md` in that directory, newest first; a name *ending* in `-archive.md` is retired and silences the close guard for good, so a live `LEDGER-archive-migration.md` still counts. Files survive context compaction; conversation context does not.
 
+**Per-session binding.** Two parallel sessions in the same repo used to share one newest-mtime "active ledger" — session A's close could be held on session B's newer ledger, or silenced by it. Now the first `Write`/`Edit`/`MultiEdit` a session makes to a live ledger binds that session to it (recorded in its own marker); a spawn or tracker task that is satisfied by a *discovered* ledger adopts and binds it the same way. A bound session's guards resolve only its own ledger, however new or old another session's is. A session with no binding yet — or none at all (manual install) — falls back to the original newest-wins discovery, so nothing before this changes.
+
 ```markdown
 - [ ] 1. Every explicit requirement, one line each
 - [ ] 2. Implicit expectations and constraints too

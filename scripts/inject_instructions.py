@@ -136,22 +136,28 @@ def _configured_model():
 
 
 def _read_marker(cache):
-    """(started, model, profile) from the marker; (None, None, None) if unreadable.
+    """(started, model, profile, ledger) from the marker; all None if unreadable.
 
     `profile` is the profile this session was last INJECTED with — the
     switch detector's only input. It is absent on markers written by
     pre-0.15.0 versions and on sessions whose fires were all teammate
-    skips; in both cases the caller must fall back to the full core."""
+    skips; in both cases the caller must fall back to the full core.
+
+    `ledger` is the D1 per-session ledger binding (scripts/ledger_bind.py,
+    and the spawn/task guards' adoption-on-discovery). It must be carried
+    forward through every marker rewrite below — SessionStart re-fires on
+    resume/clear/compact and rewrites this file each time, and a rewrite
+    that dropped the key would silently unbind the session mid-workflow."""
     if not cache:
-        return None, None, None
+        return None, None, None, None
     try:
         with open(cache, encoding="utf-8") as f:
             d = json.load(f)
         if isinstance(d, dict):
-            return d.get("started"), d.get("model"), d.get("profile")
+            return d.get("started"), d.get("model"), d.get("profile"), d.get("ledger")
     except Exception:
         pass
-    return None, None, None
+    return None, None, None, None
 
 
 TEAMMATE_DETECT_BUDGET = 1.5  # seconds; the walk measures ~5ms in practice
@@ -236,7 +242,7 @@ def main():
     session_id = data.get("session_id")
     fire = data.get("source")  # startup | resume | clear | compact (advisory)
     cache = session_model_cache_path(session_id)
-    prev_started, prev_model, prev_profile = _read_marker(cache)
+    prev_started, prev_model, prev_profile, prev_ledger = _read_marker(cache)
 
     profile, source = resolve_profile(model, _configured_model(), prev_model)
 
@@ -305,16 +311,20 @@ def main():
             # previous value forward rather than claiming an injection
             # that never happened.
             stored_profile = prev_profile if teammate else profile
+            # D1 per-session ledger binding: this rewrite must carry the
+            # existing `ledger` key forward, or every resume/clear/compact
+            # re-injection would silently unbind the session mid-workflow.
+            # Omitted entirely when there was never a binding to carry.
+            marker = {"model": stored_model, "session_id": session_id,
+                      "started": round(started, 3), "profile": stored_profile}
+            if prev_ledger:
+                marker["ledger"] = prev_ledger
             # Atomic replace: a crash mid-write must never leave a
             # truncated marker. The tmp name keeps the fable-orch-*.json
             # shape so an orphan from a crash still matches the 96h sweep.
             tmp = f"{cache}.{os.getpid()}.tmp.json"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(
-                    {"model": stored_model, "session_id": session_id,
-                     "started": round(started, 3), "profile": stored_profile},
-                    f,
-                )
+                json.dump(marker, f)
             os.replace(tmp, cache)
     except Exception:
         pass

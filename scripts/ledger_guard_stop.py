@@ -69,6 +69,77 @@ def _metric(event, session_id=None, **extra):
         pass
 
 
+def _marker_dict(session_id):
+    """This session's injector marker as a dict, or None if there is no
+    marker file to read (manual install, or before the first SessionStart
+    fire) — callers must fall back to legacy (session-agnostic) behavior
+    in that case. An unreadable/corrupt-but-present marker still counts
+    as present, so it decodes to {} rather than None."""
+    if not session_id:
+        return None
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    cache = os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    if not os.path.isfile(cache):
+        return None
+    try:
+        with open(cache, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_marker_dict(session_id, marker):
+    """Atomic read-modify-write of the marker (tmp file + os.replace) —
+    same pattern as inject_instructions.py's cache rewrite. Best effort;
+    never raises."""
+    if not session_id:
+        return
+    safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+    cache = os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
+    try:
+        tmp = f"{cache}.{os.getpid()}.tmp.json"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(marker, f)
+        os.replace(tmp, cache)
+    except Exception:
+        pass
+
+
+def _bound_ledger(session_id):
+    """The ledger path this session is bound to, if the marker names one
+    AND it still exists AND is still a live-named ledger — else unbinds
+    (rewrites the marker without the key, best effort) and returns None.
+    None also covers "no marker" and "no binding recorded"."""
+    marker = _marker_dict(session_id)
+    if marker is None:
+        return None
+    ledger = marker.get("ledger")
+    if not isinstance(ledger, str) or not ledger:
+        return None
+    name = os.path.basename(ledger).lower()
+    live = (
+        name.startswith("ledger") and name.endswith(".md")
+        and name[6:7] in (".", "-", "_")
+        and not (name.endswith("-archive.md") or name.endswith("_archive.md"))
+    )
+    if live and os.path.isfile(ledger):
+        return ledger
+    marker.pop("ledger", None)
+    _write_marker_dict(session_id, marker)
+    return None
+
+
+def _bind_ledger(session_id, ledger):
+    """Bind (or rebind) this session's marker to `ledger` — best effort,
+    a no-op when there is no marker to bind onto."""
+    marker = _marker_dict(session_id)
+    if marker is None:
+        return
+    marker["ledger"] = ledger
+    _write_marker_dict(session_id, marker)
+
+
 def active_ledger_in(dirpath):
     """The live ledger in dirpath/.workflow, or None.
 
@@ -532,9 +603,25 @@ def run_guard(data):
             _metric("stop_suppressed", data.get("session_id"), reason="teammate")
             return
 
-    ledger = find_ledger(data.get("cwd"))
-    if not ledger:
-        return
+    session_id = data.get("session_id")
+    marker = _marker_dict(session_id)
+    if marker is not None:
+        # D1 per-session binding: bound -> hold ONLY that ledger; the
+        # binding itself IS the ownership decision now (no mtime check).
+        # Marker present but unbound (no ledger Write/Edit/MultiEdit yet,
+        # no spawn/task adoption) -> never block. This is the actual fix:
+        # a marker used to fall back to mtime-based "ownership", which a
+        # concurrent session's newer ledger could satisfy falsely.
+        ledger = _bound_ledger(session_id)
+        if not ledger:
+            _metric("stop_suppressed", session_id, reason="unbound")
+            return
+    else:
+        # No marker at all (manual install, or before this session's
+        # first SessionStart fire): legacy, session-agnostic discovery.
+        ledger = find_ledger(data.get("cwd"))
+        if not ledger:
+            return
 
     try:
         with open(ledger, encoding="utf-8", errors="replace") as f:
@@ -547,10 +634,10 @@ def run_guard(data):
     if not open_items:
         return
 
-    session_id = data.get("session_id")
     mode = (os.environ.get("LEDGER_GUARD_STOP_MODE") or "once-per-session").strip().lower()
     if mode != "every-turn":
-        if not owned_by_session(ledger, session_id):
+        # A bound session skips mtime ownership entirely — see above.
+        if marker is None and not owned_by_session(ledger, session_id):
             _metric("stop_suppressed", session_id, reason="not-owned", ledger=ledger)
             return
         if already_reminded(session_id, ledger):
@@ -572,7 +659,8 @@ def run_guard(data):
             "haven't. If you are NOT closing a workflow, acknowledge the open-item "
             "count in one short line and stop — this reminder fires once per "
             "session. Archive the ledger (rename to LEDGER-<topic>-archive.md) "
-            "if the task is truly abandoned."
+            "if the task is truly abandoned — doing so also unbinds this "
+            "session from it."
         ),
     }))
 
