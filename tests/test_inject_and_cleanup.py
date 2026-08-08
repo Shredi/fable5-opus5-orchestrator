@@ -525,6 +525,8 @@ def test_stats_reads_the_switch_event_without_crashing(tmp_path):
     assert "mid-session profile switches: 1" in proc.stdout
 
 
+@POSIX  # HOME= is meant to redirect expanduser("~"); nt's expanduser ignores it,
+         # so this would pass vacuously (nothing ever gets written there) on nt
 def test_metrics_optout(tmp_path):
     home = tmp_path / "home"
     home.mkdir()

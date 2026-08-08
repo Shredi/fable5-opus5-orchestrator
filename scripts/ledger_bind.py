@@ -73,9 +73,17 @@ def _bind(data):
         return
 
     real = os.path.realpath(file_path)
+    if not os.path.isfile(real):
+        return  # Write payload for a path that was never actually created
     if not _is_live_ledger_name(os.path.basename(real)):
         return
-    if os.path.basename(os.path.dirname(real)) != ".workflow":
+    # Accept EITHER the raw path's parent or the realpath's parent being
+    # named ".workflow" (case-insensitively): a symlinked .workflow/ dir
+    # resolves its realpath parent to the symlink's TARGET directory name,
+    # which find_ledger() (walking the raw tree) still treats as live.
+    raw_parent = os.path.basename(os.path.dirname(file_path)).lower()
+    real_parent = os.path.basename(os.path.dirname(real)).lower()
+    if raw_parent != ".workflow" and real_parent != ".workflow":
         return
 
     try:

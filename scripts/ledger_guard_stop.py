@@ -614,7 +614,12 @@ def run_guard(data):
         # concurrent session's newer ledger could satisfy falsely.
         ledger = _bound_ledger(session_id)
         if not ledger:
-            _metric("stop_suppressed", session_id, reason="unbound")
+            # Only worth a metric line when there was actually something
+            # to be suppressed — an ordinary session with no ledger in
+            # the repo at all must not write a line on every turn-end
+            # (upstream wrote nothing here either).
+            if find_ledger(data.get("cwd")):
+                _metric("stop_suppressed", session_id, reason="unbound")
             return
     else:
         # No marker at all (manual install, or before this session's
@@ -636,10 +641,12 @@ def run_guard(data):
 
     mode = (os.environ.get("LEDGER_GUARD_STOP_MODE") or "once-per-session").strip().lower()
     if mode != "every-turn":
-        # A bound session skips mtime ownership entirely — see above.
-        if marker is None and not owned_by_session(ledger, session_id):
-            _metric("stop_suppressed", session_id, reason="not-owned", ledger=ledger)
-            return
+        # No separate mtime-ownership check here: a bound session skips it
+        # by design (the binding IS the ownership decision), and in the
+        # unbound/no-marker legacy branch owned_by_session() degenerates
+        # to True by construction (same cache-file existence check this
+        # function already made to decide `marker is None`) — the old
+        # `not owned_by_session(...)` guard was dead code on this path.
         if already_reminded(session_id, ledger):
             _metric("stop_suppressed", session_id, reason="already-reminded", ledger=ledger)
             return

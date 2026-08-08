@@ -13,7 +13,7 @@ import json
 import os
 import time
 
-from conftest import REPO, run_hook, write_ledger, write_marker
+from conftest import POSIX, REPO, run_hook, write_ledger, write_marker
 
 BIND = "ledger_bind.py"
 SPAWN = "ledger_guard_spawn.py"
@@ -265,3 +265,65 @@ def test_injector_omits_ledger_key_when_never_bound(tmp_path):
              env_extra=env, tmpdir=tmp_path)
     data = json.loads(marker_path(tmp_path, "s-nocarry").read_text(encoding="utf-8"))
     assert "ledger" not in data
+
+
+# --- verifier findings: regressions -------------------------------------
+
+def test_no_bind_for_a_write_payload_naming_a_nonexistent_ledger(repo_dir, tmp_path):
+    # A Write payload naming a ledger that was never actually created on
+    # disk (failed tool call, or a path the model only intends to write)
+    # must not rebind the marker away from an already-live ledger.
+    live = write_ledger(repo_dir, "- [ ] 1. open\n")
+    write_marker(tmp_path, time.time(), ledger=live)
+    ghost = repo_dir / ".workflow" / "LEDGER-ghost.md"  # never created
+    run_hook(BIND, bind_payload("test-session", ghost), tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(live))
+
+
+def test_edit_and_multiedit_tool_names_actually_bind(repo_dir, tmp_path):
+    for tool_name in ("Edit", "MultiEdit"):
+        session_id = f"s-{tool_name}"
+        write_marker(tmp_path, time.time(), session=session_id)
+        ledger = _named_ledger(repo_dir, f"LEDGER-{tool_name.lower()}.md")
+        run_hook(
+            BIND, bind_payload(session_id, ledger, tool_name=tool_name), tmpdir=tmp_path
+        )
+        assert marker(tmp_path, session_id)["ledger"] == os.path.realpath(str(ledger))
+
+
+def test_archived_bound_ledger_lets_a_spawn_adopt_a_live_sibling(repo_dir, tmp_path):
+    bound = write_ledger(repo_dir, "- [x] 1. done\n")
+    write_marker(tmp_path, time.time(), ledger=bound)
+    archived = bound.with_name("LEDGER-topic-archive.md")
+    bound.rename(archived)
+    sibling = _named_ledger(repo_dir, "LEDGER-sibling.md", "- [ ] 1. open\n")
+    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(sibling))
+
+
+def test_corrupt_marker_json_never_blocks_or_crashes(repo_dir, tmp_path):
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    marker_path(tmp_path).write_text("not json at all", encoding="utf-8")
+    assert run_hook(STOP, stop_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+def test_non_dict_marker_json_never_blocks_or_crashes(repo_dir, tmp_path):
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    marker_path(tmp_path).write_text("[1, 2, 3]", encoding="utf-8")
+    assert run_hook(STOP, stop_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+@POSIX  # metrics land under expanduser("~"); HOME= only redirects it on posixpath
+def test_ordinary_no_ledger_session_writes_no_metrics_line(repo_dir, tmp_path):
+    # Regression for the upstream-parity fix: a marker exists (SessionStart
+    # fired) but is unbound, AND the repo has no ledger at all — this is
+    # the overwhelmingly common case (most turns, most sessions) and must
+    # not cost a metrics line every single time.
+    session_id = "s-no-ledger"
+    write_marker(tmp_path, time.time(), session=session_id)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"HOME": str(home), "FABLE_ORCH_METRICS": "1"}
+    result = run_hook(STOP, stop_payload(repo_dir, session_id), env_extra=env, tmpdir=tmp_path)
+    assert result is None
+    assert not (home / ".claude" / "fable-orch" / "metrics.jsonl").exists()
