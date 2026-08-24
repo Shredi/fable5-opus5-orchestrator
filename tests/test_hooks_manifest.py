@@ -61,6 +61,14 @@ def test_posttooluse_matcher_covers_ledger_bind():
         assert not pattern.search(tool), f"matcher over-matches {tool}"
 
 
+def test_pretooluse_runs_write_guard():
+    entries = [e for e in _manifest()["PreToolUse"]
+               if re.compile(e["matcher"]).search("Write")]
+    assert entries, "no PreToolUse matcher covers Write"
+    commands = [h["command"] for e in entries for h in e["hooks"]]
+    assert any("ledger_guard_write.py" in c for c in commands)
+
+
 def test_posttooluse_runs_ledger_bind():
     entry = next(e for e in _manifest()["PostToolUse"]
                  if re.compile(e["matcher"]).search("Write"))

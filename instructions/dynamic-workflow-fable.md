@@ -21,7 +21,9 @@ fork (≤2/session, only while the conversation is short).
 
 ## Rule 1 — Requirements Ledger (hook-enforced)
 Before any delegation write every requirement, constraint, and edge
-case to ./.workflow/LEDGER*.md — hooks see only that path. One
+case to a NEW topic-named ./.workflow/LEDGER-<topic>.md — never bare
+LEDGER.md, never overwrite another task's ledger (hook-enforced; pick
+a fresh topic name). Hooks see any `LEDGER*.md` in .workflow/. One
 `- [ ] N. <item>` line each; `- [x]` only addressed AND verified;
 `- [~] deferred: <reason>` only with user approval; the LAST item is
 always `- [ ] V. fresh-eyes verification passed`, closed only by the
@@ -29,7 +31,8 @@ verifier. Phases cite item numbers; append discoveries; ambiguity →
 ASK THE USER. Write the ledger + first worker wave in ONE message.
 Hooks: >1500-char spawns blocked while the ledger is missing; 3rd
 ledgerless tracker task denied once; first close held while any
-`- [ ]` remains.
+`- [ ]` remains; Write onto an existing live ledger this session
+isn't bound to is denied — use Edit to continue your own.
 
 ## Rule 2 — filesystem is shared memory
 Bulk lives in ./.workflow/scratch/; agents return paths + briefs,

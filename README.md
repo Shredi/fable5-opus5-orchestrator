@@ -105,7 +105,7 @@ Detection runs at each session start, in priority order: an explicit `FABLE_ORCH
 
 ### 2 · A Requirements Ledger
 
-Before serious delegation the chair writes every requirement, constraint, and edge case as one checkbox line in `./.workflow/LEDGER.md` — or `LEDGER-<topic>.md` beside it when one project runs several. The hooks watch every `LEDGER*.md` in that directory, newest first; a name *ending* in `-archive.md` is retired and silences the close guard for good, so a live `LEDGER-archive-migration.md` still counts. Files survive context compaction; conversation context does not.
+Before serious delegation the chair writes every requirement, constraint, and edge case as one checkbox line in a **new, topic-named** `./.workflow/LEDGER-<topic>.md` — never the bare `LEDGER.md`, and never an existing ledger file (a write guard denies overwriting one; see below). The hooks watch every `LEDGER*.md` in that directory, newest first; a name *ending* in `-archive.md` is retired and silences the close guard for good, so a live `LEDGER-archive-migration.md` still counts. Files survive context compaction; conversation context does not.
 
 **Per-session binding.** Two parallel sessions in the same repo used to share one newest-mtime "active ledger" — session A's close could be held on session B's newer ledger, or silenced by it. Now the first `Write`/`Edit`/`MultiEdit` a session makes to a live ledger binds that session to it (recorded in its own marker); a spawn or tracker task that is satisfied by a *discovered* ledger adopts and binds it the same way. A bound session's guards resolve only its own ledger, however new or old another session's is. A session with no binding yet — or none at all (manual install) — falls back to the original newest-wins discovery, so nothing before this changes.
 
@@ -170,7 +170,25 @@ turn ends
        good; LEDGER_GUARD_STOP_MODE=every-turn restores per-turn blocking.
 ```
 
-A fifth hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its final report is accepted.
+**Write guard** (`PreToolUse` on `Write`) — stops a fresh `Write` from clobbering an EXISTING live ledger that isn't this session's: `.workflow/` is shared, session-agnostic, and not git-tracked, so nothing else stops a chair from overwriting another session's (or an earlier task's) ledger outright:
+
+```
+Write <path>
+  │
+  ├─ target doesn't exist yet ...................... PASS  (this is how a new ledger is made)
+  ├─ not a live LEDGER*.md name, or not in .workflow/ PASS  (not this guard's business)
+  ├─ no session marker (manual install) ............. PASS  (fail open)
+  ├─ this session is bound to exactly this path ..... PASS  (continuing your own ledger)
+  │
+  └─ existing live ledger, session bound elsewhere
+     or not bound at all ........................... DENY  → "create a NEW
+                                                     topic-named LEDGER-<topic>.md,
+                                                     or use Edit to continue THIS one"
+```
+
+`LEDGER_WRITE_GUARD=0` disables it. It only reads — no lock needed — so it runs identically on macOS/Linux/Windows.
+
+A sixth hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its final report is accepted.
 
 ## Watching the team live
 
@@ -252,6 +270,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ FABLE_ORCH_TEAMMATE_INJECT    │ (off)              │ 1 injects the profile into teammates too   │
 │ LEDGER_GUARD_TASKS            │ 3                  │ 3rd ledgerless tracker task denied; 0 off  │
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session   │ every-turn restores per-turn blocking      │
+│ LEDGER_WRITE_GUARD            │ (on)               │ 0 disables the ledger overwrite guard      │
 │ FABLE_ORCH_METRICS            │ (on)               │ 0 disables local metrics logging           │
 │ FABLE_ORCH_SWARM_CLEANUP      │ (on)               │ 0 disables all teammate reaping            │
 │ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables    │

@@ -223,7 +223,8 @@ def test_first_two_tasks_pass_third_denied_once(repo_dir, tmp_path):
     assert results[0] is None and results[1] is None
     assert is_deny(results[2])
     reason = results[2]["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "task #3" in reason and "LEDGER.md" in reason
+    assert "task #3" in reason and "LEDGER-<topic>.md" in reason
+    assert "NEVER overwrite an existing ledger file" in reason
     assert results[3] is None  # one reminder per session, then quiet
 
 

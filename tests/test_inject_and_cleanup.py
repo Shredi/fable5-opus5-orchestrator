@@ -103,7 +103,9 @@ def test_preserved_decisions_survive_the_diet():
         assert "no haiku" in text, f"{name}: haiku ban dropped"
         assert "fork (≤2/session" in text, f"{name}: fork cap dropped"
         assert "EVERY close gets a FRESH" in text, f"{name}: fresh-eyes-every-close dropped"
-        assert "./.workflow/LEDGER*.md" in text, f"{name}: ledger path dropped"
+        assert "./.workflow/LEDGER-<topic>.md" in text, f"{name}: ledger path dropped"
+        assert "never overwrite another task's ledger" in text, \
+            f"{name}: overwrite-guard steer dropped"
         # v0.15.0 additions: the report diet and the batching rule.
         assert "≤40 lines" in text, f"{name}: report line cap dropped"
         assert "five greps is one agent" in text, f"{name}: batching rule dropped"
