@@ -12,10 +12,22 @@ def _manifest():
         return json.load(f)["hooks"]
 
 
-def test_all_five_events_registered():
+def test_all_six_events_registered():
     assert set(_manifest()) == {
-        "SessionStart", "PreToolUse", "PostToolUse", "Stop", "SessionEnd",
+        "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+        "Stop", "SessionEnd",
     }
+
+
+def test_userpromptsubmit_runs_the_cold_cache_guard():
+    # No matcher: the event fires on every prompt, and the guard decides.
+    entries = _manifest()["UserPromptSubmit"]
+    assert all("matcher" not in e for e in entries)
+    commands = [h["command"] for e in entries for h in e["hooks"]]
+    assert any("cold_cache_guard.py" in c for c in commands)
+    # This one runs BEFORE every prompt, so its timeout has to be short.
+    timeouts = [h["timeout"] for e in entries for h in e["hooks"]]
+    assert all(t <= 10 for t in timeouts)
 
 
 def test_every_hook_command_script_exists():

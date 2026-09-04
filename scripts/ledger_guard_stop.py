@@ -106,6 +106,27 @@ def _write_marker_dict(session_id, marker):
         pass
 
 
+def stamp_last_stop(session_id):
+    """Record this turn-end in the session marker for the cold-cache guard.
+
+    That guard (UserPromptSubmit) needs to know when the session was last
+    ACTIVE, and a turn-end is the most accurate mark there is: it is the
+    moment the model stopped writing, i.e. the moment the prompt cache
+    started its 1-hour countdown. Read-modify-write through the same
+    atomic pair as everything else, so `started`/`model`/`profile`/
+    `ledger` are carried forward untouched.
+
+    No behaviour of this guard depends on the key, and a marker is never
+    CREATED here — marker presence flips other guards from fail-open to
+    enforcing. Called after the decision has been flushed; a failure is
+    silent."""
+    marker = _marker_dict(session_id)
+    if marker is None:
+        return
+    marker["last_stop"] = round(time.time(), 3)
+    _write_marker_dict(session_id, marker)
+
+
 def _bound_ledger(session_id):
     """The ledger path this session is bound to, if the marker names one
     AND it still exists AND is still a live-named ledger — else unbinds
@@ -504,6 +525,11 @@ def main():
         # Only now — the ownership check above reads the marker's mtime.
         try:
             touch_session_files((data or {}).get("session_id"))
+        except Exception:
+            pass
+        # Same reason: this rewrites the marker (and so its mtime).
+        try:
+            stamp_last_stop((data or {}).get("session_id"))
         except Exception:
             pass
         try:
