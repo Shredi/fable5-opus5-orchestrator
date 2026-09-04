@@ -1146,3 +1146,38 @@ def test_protocol_mismatch_socket_survives(tmp_path):
     assert run_hook(CLEANUP, {"session_id": "s-mismatch"}, env_extra=env, tmpdir=tmp_path) is None
     assert sock.exists()
     assert not kill_log.exists()
+
+
+# --- the marker belongs to more hooks than this one -------------------
+
+def test_session_start_carries_the_cold_cache_stamps_forward(tmp_path):
+    # SessionStart rebuilds the marker from a whitelist on EVERY fire.
+    # The cold-cache guard's activity stamps live in the same file, and a
+    # rewrite that dropped them left a `claude --resume` of yesterday's
+    # 400k-token session with no idle baseline — it sailed through the
+    # guard on exactly the message the guard exists for.
+    stamps = {"last_stop": 1000.0, "last_prompt": 1001.0,
+              "cold_ack": 1002.0, "cold_ctx": 412000}
+    for fire in ("resume", "compact", "clear", "startup"):
+        sid = f"s-cold-{fire}"
+        write_marker(tmp_path, started=123.0, session=sid,
+                     model="claude-fable-5", profile="fable", **stamps)
+        _inject(tmp_path, {"model": "claude-fable-5", "session_id": sid,
+                           "source": fire})
+        body = _marker(tmp_path, sid)
+        for key, value in stamps.items():
+            assert body.get(key) == value, f"{fire}: {key} dropped"
+        assert body["started"] == 123.0  # the old keys still work too
+
+
+def test_session_start_invents_no_stamps(tmp_path):
+    # Carrying keys forward must not mean writing keys that were never
+    # there: an unstamped marker stays unstamped, so the guard's "no
+    # baseline yet" branch keeps working.
+    write_marker(tmp_path, started=123.0, session="s-cold-none",
+                 model="claude-fable-5", profile="fable")
+    _inject(tmp_path, {"model": "claude-fable-5", "session_id": "s-cold-none",
+                       "source": "resume"})
+    body = _marker(tmp_path, "s-cold-none")
+    assert not any(k in body for k in
+                   ("last_stop", "last_prompt", "cold_ack", "cold_ctx"))
