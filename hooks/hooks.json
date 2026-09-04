@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/cold_cache_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Cold-cache guard"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "^(Agent|Task|Workflow|TaskCreate)$",
