@@ -117,22 +117,33 @@ def stamp(session_id, drop=(), **keys):
     """Read-modify-write the marker atomically, carrying every other key
     forward (`started`, `model`, `profile`, `ledger` — dropping any of
     them would unbind the session or disown its ledgers). Re-reads right
-    before writing so a concurrent hook's keys survive. Best effort."""
+    before writing so a concurrent hook's keys survive.
+
+    Returns True only when the marker actually holds the keys now. The
+    block path depends on that answer: the escape hatch it advertises
+    ("send another prompt within 3 minutes") lives in this file, so a
+    block recorded nowhere would repeat on every prompt until the user
+    found `/clear` or the kill switch."""
     marker = _marker_dict(session_id)
     if marker is None:
-        return
+        return False
     for key in drop:
         marker.pop(key, None)
     for key, value in keys.items():
         marker[key] = round(value, 3) if isinstance(value, float) else value
     path = session_marker_path(session_id)
+    tmp = f"{path}.{os.getpid()}.tmp.json"
     try:
-        tmp = f"{path}.{os.getpid()}.tmp.json"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(marker, f)
         os.replace(tmp, path)
+        return True
     except Exception:
-        pass
+        try:
+            os.remove(tmp)  # never leave a half-written sibling behind
+        except OSError:
+            pass
+        return False
 
 
 def _num(value):
@@ -299,8 +310,7 @@ def block_reason(tokens, gap_seconds, ack_min, ledger):
         f"of Fable limit).\n"
         f"/clear and start fresh (live ledger: {where}) - the ledger on disk "
         f"carries the state, and /compact would re-write the context too.\n"
-        f"Or send the same message again within {ack_min:g} min to proceed "
-        f"anyway."
+        f"Or send any prompt again within {ack_min:g} min to proceed anyway."
     )
 
 
@@ -389,7 +399,15 @@ def run_guard(data):
     if block_at > 0 and tokens >= block_at:
         # cold_ctx rides along so the ack path can report what the user
         # chose to pay without re-reading the transcript.
-        stamp(session_id, cold_ack=now, cold_ctx=tokens)
+        if not stamp(session_id, cold_ack=now, cold_ctx=tokens):
+            # No marker write, no ack window: blocking now would repeat
+            # on every prompt with no way through except /clear. A cost
+            # guard that cannot offer its own escape hatch must not use
+            # the block.
+            _metric("cold_stamp_failed", session_id, ctx_tokens=tokens,
+                    gap_min=round(gap / 60.0, 1), est_usd=round(usd, 2),
+                    est_out_equiv=int(equiv))
+            return
         _metric("cold_block", session_id, ctx_tokens=tokens,
                 gap_min=round(gap / 60.0, 1), est_usd=round(usd, 2),
                 est_out_equiv=int(equiv))

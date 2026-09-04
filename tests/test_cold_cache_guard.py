@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-from conftest import POSIX, run_hook, write_marker
+from conftest import POSIX, REPO, run_hook, write_marker
 
 SCRIPT = "cold_cache_guard.py"
 SESSION = "test-session"
@@ -197,7 +197,8 @@ def test_block_band_blocks_with_computed_numbers(tmp_path):
     assert "~$8.24 list" in reason           # 412k at the 1h write rate
     assert "~165k output-token equivalents" in reason
     assert "/clear" in reason and "none bound" in reason
-    assert "within 3 min" in reason
+    # The ack path accepts ANY prompt inside the window, and says so.
+    assert "send any prompt again within 3 min" in reason
     assert len(reason.splitlines()) <= 6
     body = marker_body(marker)
     assert body["cold_ack"] > time.time() - 30
@@ -399,3 +400,74 @@ def test_only_the_transcript_tail_is_read(tmp_path):
     assert run_hook(SCRIPT, prompt_payload(tmp_path, transcript=path),
                     tmpdir=tmp_path) is None
     assert time.time() - started < 5  # includes interpreter startup
+
+
+# --- the resume path: SessionStart must not wipe the baseline --------
+
+def test_resume_of_a_cold_session_is_still_guarded(tmp_path):
+    # End to end: a stamped marker, the SessionStart fire a `claude
+    # --resume` produces, then the first prompt. Before the injector
+    # carried the stamps forward this passed silently — the resume being
+    # the one moment the whole 400k context is provably re-cached.
+    cold_marker(tmp_path)
+    transcript = write_transcript(tmp_path, 412000)
+    run_hook("inject_instructions.py",
+             {"model": "claude-fable-5", "session_id": SESSION,
+              "source": "resume"},
+             env_extra={"CLAUDE_PLUGIN_ROOT": str(REPO)}, tmpdir=tmp_path)
+    assert blocks(run_hook(SCRIPT, prompt_payload(tmp_path, transcript=transcript),
+                           tmpdir=tmp_path))
+
+
+# --- a block the marker cannot record must not be a block ------------
+
+def _module(tmp_path, monkeypatch):
+    """Import the guard in-process, with its marker pinned to tmp_path.
+
+    The marker-write failure below cannot be staged from outside: an
+    unwritable temp dir makes tempfile.gettempdir() relocate, so the
+    marker is simply not found rather than not written. Only the guard's
+    OWN path helper is redirected — patching tempfile.gettempdir here
+    would reach the whole pytest process (it did: it moved conftest's
+    cached `ps` shim into a tmp_path that pytest then deleted, and the
+    teammate tests started failing three files later)."""
+    import importlib.util
+    from conftest import SCRIPTS
+    spec = importlib.util.spec_from_file_location("cold_cache_guard",
+                                                  SCRIPTS / SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(
+        mod, "session_marker_path",
+        lambda sid: str(tmp_path / f"fable-orch-model-{sid}.json"))
+    return mod
+
+
+def test_stamp_reports_failure(tmp_path, monkeypatch):
+    mod = _module(tmp_path, monkeypatch)
+    cold_marker(tmp_path)
+    assert mod.stamp(SESSION, last_prompt=1.0) is True
+    monkeypatch.setattr(mod.os, "replace",
+                        lambda *a: (_ for _ in ()).throw(OSError(28, "ENOSPC")))
+    assert mod.stamp(SESSION, last_prompt=2.0) is False
+    # and no half-written sibling is left in the temp dir
+    assert not list(tmp_path.glob("fable-orch-model-*.tmp.json"))
+
+
+def test_block_that_cannot_be_recorded_fails_open(tmp_path, monkeypatch, capsys):
+    # The block advertises an escape hatch that lives in the marker. If
+    # the marker cannot be written, that hatch never opens and the block
+    # would repeat on every prompt — so the guard passes instead and says
+    # so in the metrics.
+    mod = _module(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod.os, "replace",
+                        lambda *a: (_ for _ in ()).throw(OSError(28, "ENOSPC")))
+    logged = []
+    monkeypatch.setattr(mod, "_metric",
+                        lambda event, sid=None, **kw: logged.append(event))
+    monkeypatch.setattr(mod, "_is_teammate_session", lambda: False)
+    cold_marker(tmp_path)
+    transcript = write_transcript(tmp_path, 412000)
+    mod.run_guard(prompt_payload(tmp_path, transcript=transcript))
+    assert capsys.readouterr().out == ""      # nothing printed: no block
+    assert logged == ["cold_stamp_failed"]
