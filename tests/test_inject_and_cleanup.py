@@ -44,7 +44,7 @@ def test_cores_stay_on_the_token_diet():
     # moved the detail to the playbook skill, which loads on demand —
     # the core is a summary now, and this pin keeps it one.
     # The Fable 5.1 rules (ledger ASSUMPTIONs, whole-ledger recap, fable
-    # effort floor, fable verifier default, decline check) fit inside it:
+    # effort-not-selectable sentence, decline check) fit inside it:
     # each states the RULE in one line and points at the playbook section
     # holding the detail, the same trade the v0.15.0 diet made.
     for name in CORES:
@@ -215,13 +215,14 @@ def test_decline_check_comes_before_the_other_tier():
 
 def test_playbook_carries_the_worker_spec_and_long_output_blocks():
     # Every implementation spawn is fenced to the task, and a fable
-    # spawn at xhigh/max that writes a long deliverable is told not to
+    # spawn asked for a long deliverable is told not to
     # draft it twice. The paste-ready wording lives beside the skill so
     # SKILL.md stays a contract, not a prompt library.
     book = _flat(_playbook())
     assert "Worker spec boilerplate" in book
     assert "SCOPE + EDITS block" in book
     assert "LONG OUTPUT block" in book
+    assert "asked for a long deliverable" in book
     assert "A spawn is not a pause" in book          # chair keeps working
     blocks = REPO.joinpath("skills", "playbook", "spec-blocks.md")
     assert blocks.is_file(), f"missing paste-ready blocks: {blocks}"
