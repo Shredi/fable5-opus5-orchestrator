@@ -43,9 +43,15 @@ def test_cores_stay_on_the_token_diet():
     # 10,069 and silently stopped reaching the chair at all). v0.15.0
     # moved the detail to the playbook skill, which loads on demand —
     # the core is a summary now, and this pin keeps it one.
+    # 4000 → 4500 (Fable 5.1 pass): five rules landed in the cores that
+    # have nowhere else to live — the ledger ASSUMPTION convention, the
+    # whole-ledger recap, the fable effort floor/ceiling, the fable
+    # verifier default and the decline false-positive check — after a
+    # compression pass on every existing paragraph; the detail behind
+    # them is in the playbook, not here.
     for name in CORES:
         text = _instr(name)
-        assert len(text) < 4000, f"{name} is {len(text)} chars — over the 4k core diet"
+        assert len(text) < 4500, f"{name} is {len(text)} chars — over the core diet"
 
 
 def test_switch_notes_stay_tiny():
@@ -113,6 +119,81 @@ def test_preserved_decisions_survive_the_diet():
     assert "at most 2 per session" in book          # fork cap, in full
     assert "at most 40 lines TOTAL" in book         # report diet, in full
     assert "at most 10 lines inline" in book        # verbatim spill rule
+
+
+# --- Fable 5.1 prompting pass (2026-09): the rules the guide added ---
+
+def test_ambiguity_becomes_a_ledger_assumption():
+    # The harness now tells the chair the user isn't watching, so
+    # "ambiguity → ASK THE USER" stalls the work instead of resolving
+    # it. The ledger carries the reading instead, where the user rules
+    # on it at the plan checkpoint. Guide: "Delivering work".
+    for name in CORES:
+        text = _flat(_instr(name))
+        assert "ambiguity → ASK THE USER" not in text, f"{name}: old ask-rule back"
+        assert "AMBIGUITY: ask only when the readings mean materially " \
+               "different work" in text, name
+        assert "`- [ ] N. ASSUMPTION: <reading>`" in text, name
+
+
+def test_closing_recap_covers_the_whole_ledger():
+    # Fable 5.1 writes a final message that covers only the last step;
+    # the ledger is the antidote — the recap walks every item.
+    for name in CORES:
+        assert "closing recap walks the WHOLE ledger" in _flat(_instr(name)), name
+
+
+def test_fable_tier_effort_rules_are_fable_only():
+    # fable spends the chair's own limit, so its floor is `high` and
+    # round-UP stops there; xhigh/max is reserved. The OPUS profile runs
+    # while the fable limit is spent — those rules would be dead text
+    # there, and its verifier scale stays exactly as it was.
+    fable = _flat(_instr("dynamic-workflow-fable.md"))
+    assert "fable spawns START at `high`, round-UP stops there" in fable
+    assert "xhigh/max on fable is only for irreversible work" in fable
+    assert "a FABLE verifier defaults to `high`, `max` only for " \
+           "irreversible or architecture closes" in fable
+    opus = _flat(_instr("dynamic-workflow-opus.md"))
+    assert "fable spawns START" not in opus
+    assert "`max` for architecture / irreversible / security / the " \
+           "largest closes" in opus            # opus verifier scale untouched
+
+
+def test_decline_check_comes_before_the_other_tier():
+    # A decline is often the input's fault, not the wording's: strip the
+    # documented false-positive causes and the SAME tier may take it.
+    # Only then does the unchanged rerun on another tier apply, and a
+    # second decline still stops the work. Guide: "Reduce safeguard
+    # false positives".
+    for name in CORES:
+        text = _flat(_instr(name))
+        assert "strip the playbook's three false-positive causes and " \
+               "rerun the SAME tier" in text, name
+        assert "rerun UNCHANGED on another tier" in text, name
+        assert "second decline STOPS the work" in text, name
+    book = _flat(_playbook())
+    assert "base64 in tool output" in book
+    assert '"does this compile" phrasing' in book
+    assert "a lesser-known language with no docs" in book
+    assert "Security review stays on opus" in book
+
+
+def test_playbook_carries_the_worker_spec_and_long_output_blocks():
+    # Every implementation spawn is fenced to the task, and a fable
+    # spawn at xhigh/max that writes a long deliverable is told not to
+    # draft it twice. The paste-ready wording lives beside the skill so
+    # SKILL.md stays a contract, not a prompt library.
+    book = _flat(_playbook())
+    assert "Worker spec boilerplate" in book
+    assert "SCOPE + EDITS block" in book
+    assert "LONG OUTPUT block" in book
+    assert "A spawn is not a pause" in book          # chair keeps working
+    blocks = REPO.joinpath("skills", "playbook", "spec-blocks.md")
+    assert blocks.is_file(), f"missing paste-ready blocks: {blocks}"
+    text = _flat(blocks.read_text(encoding="utf-8"))
+    assert "don't turn scratch checks into additional permanent test files" in text
+    assert "surgically edit a file rather than rewrite the entire thing" in text
+    assert "Usually it is not needed to draft an output multiple times." in text
 
 
 def test_injects_the_fable_profile(tmp_path):
