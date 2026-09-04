@@ -1,6 +1,6 @@
 ---
 name: playbook
-description: Orchestrator playbook — the delegation contract: research, output contract, worker specs, spawn economics, forks, teammates, effort, verification, declines, hygiene. The chair MUST load it before its first delegation each session; the core only summarizes it.
+description: Orchestrator playbook — the delegation contract: research, output contract, worker specs, spawn economics, forks, teammates, verification, declines, hygiene. The chair MUST load it before its first delegation each session; the core only summarizes it.
 ---
 
 # Orchestrator Playbook
@@ -13,12 +13,12 @@ blocks: `spec-blocks.md`, next to this SKILL.md (repo path
 ## Research pipeline — fan out, no mid-flight dumps
 
 YOU pick the questions and sources — never a fetch worker. ONE sonnet
-(`medium`) per source: it fetches the source VERBATIM to
-./.workflow/scratch/ FIRST (that copy is the audit trail, no
-filtering during fetch), THEN returns a brief from it: claims,
-evidence, exact quotes, confidence, contradictions, path. A final
-sonnet (`high`) synthesizes; YOU check it and its evidence against
-the ledger and decide. Intermediates never enter your context.
+per source: it fetches the source VERBATIM to ./.workflow/scratch/
+FIRST (that copy is the audit trail, no filtering during fetch), THEN
+returns a brief from it: claims, evidence, exact quotes, confidence,
+contradictions, path. A final sonnet synthesizes; YOU check it and
+its evidence against the ledger and decide. Intermediates never enter
+your context.
 
 ## Subagent output contract (enforced)
 
@@ -50,6 +50,13 @@ checklist; spawn separately only when parallelism or isolation pays
 that back. Read-only agents share the repo; parallel EDITORS each
 run with `isolation: "worktree"`.
 
+Before defaulting to a generic worker, check the project's agent
+roster — CLAUDE.md's `## Orchestrator agents` section plus
+auto-discovered `.claude/agents/` — for a matching specialized agent;
+it keeps bulky domain output off the chair and carries its own
+`model:`/`effort:` frontmatter, so spawn it via `subagent_type`
+instead of a generic spec.
+
 ## Keep working while workers run
 
 A spawn is not a pause: while a wave runs, write the next phase's spec
@@ -74,16 +81,12 @@ dismiss it: `{"type": "shutdown_request"}`. Dismissal is final, so
 dismiss only after processing the output; never leave finished
 teammates stacked (the plugin reaps them).
 
-## Fable-tier effort and long outputs
+## Long outputs (fable)
 
-fable spawns START at `high`, and "unsure → round UP" stops there:
-`xhigh`/`max` on fable only for irreversible work, architecture, or
-the largest closes. A fable VERIFIER defaults to `high`, `max` only
-for irreversible or architecture closes; sonnet, opus and the opus
-verifier keep the core scale. A fable spawn at xhigh/max writing a
-report, spec or large file carries the LONG OUTPUT block from
-`spec-blocks.md` (same directory) — otherwise it drafts the
-deliverable twice, in reasoning and again as the reply.
+Any fable spawn asked for a long deliverable — a report, spec or
+large file — carries the LONG OUTPUT block from `spec-blocks.md`
+(same directory): left to itself, a fable spawn drafts the
+deliverable twice, once in reasoning and again as the reply.
 
 ## Verification procedure
 
@@ -91,8 +94,8 @@ The verifier is FRESH — it has not worked on the task. Give it the
 original request, the ledger path and the work-product paths (diffs,
 reports, not the raw scratch dump). It reads from disk to find what
 is missing, wrong or unaddressed, item by item; only it closes `V.`.
-Effort follows the blast-radius scale above. Findings become new
-phases; re-verify. CAP 3 cycles, then STOP and report the open items.
+Findings become new phases; re-verify. CAP 3 cycles, then STOP and
+report the open items.
 
 ## Declines — fix the input
 
