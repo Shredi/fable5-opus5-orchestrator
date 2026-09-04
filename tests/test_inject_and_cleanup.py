@@ -43,15 +43,13 @@ def test_cores_stay_on_the_token_diet():
     # 10,069 and silently stopped reaching the chair at all). v0.15.0
     # moved the detail to the playbook skill, which loads on demand —
     # the core is a summary now, and this pin keeps it one.
-    # 4000 → 4500 (Fable 5.1 pass): five rules landed in the cores that
-    # have nowhere else to live — the ledger ASSUMPTION convention, the
-    # whole-ledger recap, the fable effort floor/ceiling, the fable
-    # verifier default and the decline false-positive check — after a
-    # compression pass on every existing paragraph; the detail behind
-    # them is in the playbook, not here.
+    # The Fable 5.1 rules (ledger ASSUMPTIONs, whole-ledger recap, fable
+    # effort floor, fable verifier default, decline check) fit inside it:
+    # each states the RULE in one line and points at the playbook section
+    # holding the detail, the same trade the v0.15.0 diet made.
     for name in CORES:
         text = _instr(name)
-        assert len(text) < 4500, f"{name} is {len(text)} chars — over the core diet"
+        assert len(text) < 4000, f"{name} is {len(text)} chars — over the 4k core diet"
 
 
 def test_switch_notes_stay_tiny():
@@ -72,6 +70,13 @@ def test_playbook_skill_exists_and_stays_bounded():
     text = path.read_text(encoding="utf-8")
     assert len(text) < 5000, f"SKILL.md is {len(text)} chars — over the 5k budget"
     assert "name: playbook" in text  # the namespaced literal below depends on it
+    # The paste-ready blocks sit beside SKILL.md and are read only when a
+    # spawn needs them — but without a budget of their own the 5k pin
+    # above just moves text one file to the right.
+    blocks = REPO.joinpath("skills", "playbook", "spec-blocks.md")
+    assert blocks.is_file(), f"missing paste-ready blocks: {blocks}"
+    body = blocks.read_text(encoding="utf-8")
+    assert len(body) < 3500, f"spec-blocks.md is {len(body)} chars — over its 3.5k budget"
 
 
 def test_cores_require_the_playbook_before_first_delegation():
@@ -149,12 +154,15 @@ def test_fable_tier_effort_rules_are_fable_only():
     # while the fable limit is spent — those rules would be dead text
     # there, and its verifier scale stays exactly as it was.
     fable = _flat(_instr("dynamic-workflow-fable.md"))
-    assert "fable spawns START at `high`, round-UP stops there" in fable
-    assert "xhigh/max on fable is only for irreversible work" in fable
-    assert "a FABLE verifier defaults to `high`, `max` only for " \
+    assert "fable spawns start at `high`, xhigh/max only for " \
+           "irreversible/architecture work" in fable
+    assert "a FABLE verifier instead defaults to `high`, `max` only for " \
            "irreversible or architecture closes" in fable
+    book = _flat(_playbook())
+    assert "fable spawns START at `high`" in book        # the detail, in full
+    assert '"unsure → round UP" stops there' in book
     opus = _flat(_instr("dynamic-workflow-opus.md"))
-    assert "fable spawns START" not in opus
+    assert "fable spawns start" not in opus
     assert "`max` for architecture / irreversible / security / the " \
            "largest closes" in opus            # opus verifier scale untouched
 
@@ -167,11 +175,12 @@ def test_decline_check_comes_before_the_other_tier():
     # false positives".
     for name in CORES:
         text = _flat(_instr(name))
-        assert "strip the playbook's three false-positive causes and " \
-               "rerun the SAME tier" in text, name
-        assert "rerun UNCHANGED on another tier" in text, name
+        assert "on a decline work the playbook's Declines rule before " \
+               "any rerun" in text, name
         assert "second decline STOPS the work" in text, name
     book = _flat(_playbook())
+    assert "rerunning the SAME tier fixes the input" in book
+    assert "rerun UNCHANGED on another tier" in book
     assert "base64 in tool output" in book
     assert '"does this compile" phrasing' in book
     assert "a lesser-known language with no docs" in book
@@ -559,6 +568,29 @@ def test_startup_and_clear_get_no_ledger_reminder(tmp_path):
         text = context_of(_inject(tmp_path, payload))
         assert "Live ledger for this session" not in text, fire
         assert str(ledger) not in text, fire
+
+
+def test_reminder_is_dropped_when_the_ledger_is_gone_or_archived(tmp_path):
+    # A binding outlives its file: the ledger was deleted, or retired by
+    # the `-archive.md` rename the close guard honours. Naming either
+    # sends the chair to a file that no longer speaks for the task, so
+    # the line is dropped — the rest of the profile is unaffected.
+    ledger = _bind(tmp_path, "s-led-gone")
+    ledger.unlink()
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-gone",
+                                         "source": "compact"}))
+    assert "(FABLE profile)" in text
+    assert "Live ledger for this session" not in text
+
+    retired = tmp_path / ".workflow" / "LEDGER-old-archive.md"
+    retired.write_text("- [x] 1. done\n", encoding="utf-8")
+    write_marker(tmp_path, started=123.0, session="s-led-arch", ledger=retired,
+                 model="claude-fable-5", profile="fable")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-arch",
+                                         "source": "compact"}))
+    assert "Live ledger for this session" not in text
 
 
 def test_compact_without_a_binding_says_nothing(tmp_path):

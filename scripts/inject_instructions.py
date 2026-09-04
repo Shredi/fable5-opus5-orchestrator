@@ -60,7 +60,8 @@ earlier reasoning — `compact` (the context was rewritten) and `resume`
 already carries a ledger binding gets one extra line after the profile,
 naming that ledger's path. Fable 5.1 executes long horizons well but
 only from what is in front of it; the file on disk is what survived.
-Unbound sessions and startup/clear fires get nothing.
+Unbound sessions, startup/clear fires, and bindings whose file is gone
+or archived get nothing.
 
 TEAMMATE sessions are skipped entirely. Named agent-teams workers are
 full claude sessions and fire SessionStart like the chair does — but the
@@ -183,10 +184,18 @@ def ledger_reminder(fire, ledger):
     Only for a session that already carries a `ledger` binding (written
     by the write guard / spawn-guard adoption): with no binding there is
     no path to name, and pointing an unbound session at a stale ledger
-    would hand it another task's requirements."""
-    if fire not in LEDGER_REMINDER_FIRES or not str(ledger or "").strip():
+    would hand it another task's requirements.
+
+    A binding can also outlive what it points at — the file was deleted,
+    or retired by the `-archive.md` rename the close guard honours. Both
+    are silent: naming a path that no longer holds the task's
+    requirements is worse than saying nothing."""
+    path = str(ledger or "").strip()
+    if fire not in LEDGER_REMINDER_FIRES or not path:
         return ""
-    return (f"Live ledger for this session: {ledger} — re-read it before "
+    if path.endswith("-archive.md") or not os.path.isfile(path):
+        return ""
+    return (f"Live ledger for this session: {path} — re-read it before "
             "your next decision; reasoning from before this point may be "
             "gone.")
 

@@ -1,23 +1,24 @@
 ---
 name: playbook
-description: Orchestrator playbook — the delegation contract: research, output contract, worker specs, spawn economics, forks, teammates, fable-tier effort, verification, declines, hygiene. The chair MUST load it before its first delegation each session; the injected core only summarizes it.
+description: Orchestrator playbook — the delegation contract: research, output contract, worker specs, spawn economics, forks, teammates, effort, verification, declines, hygiene. The chair MUST load it before its first delegation each session; the core only summarizes it.
 ---
 
 # Orchestrator Playbook
 
 Both chair profiles (FABLE and OPUS). The injected core wins on
-routing and limits; this is the detail behind its one-liners.
-`spec-blocks.md` beside it holds the paste-ready worker blocks.
+routing and limits; this is the detail behind it. Paste-ready worker
+blocks: `spec-blocks.md`, next to this SKILL.md (repo path
+`skills/playbook/spec-blocks.md`).
 
 ## Research pipeline — fan out, no mid-flight dumps
 
 YOU pick the questions and sources — never a fetch worker. ONE sonnet
 (`medium`) per source: it fetches the source VERBATIM to
-./.workflow/scratch/ FIRST (the disk copy is the audit trail, no
-filtering during fetch), THEN returns a brief from that copy: claims,
+./.workflow/scratch/ FIRST (that copy is the audit trail, no
+filtering during fetch), THEN returns a brief from it: claims,
 evidence, exact quotes, confidence, contradictions, path. A final
-sonnet (`high`) synthesizes; YOU check the synthesis and its evidence
-against the ledger and decide. Intermediates never enter your context.
+sonnet (`high`) synthesizes; YOU check it and its evidence against
+the ledger and decide. Intermediates never enter your context.
 
 ## Subagent output contract (enforced)
 
@@ -37,22 +38,22 @@ and re-run — never silently accepted.
 ## Worker spec boilerplate — every implementation spec
 
 Every implementation spec ends with the SCOPE + EDITS block from
-`spec-blocks.md`, verbatim: it fences the change to what the task
-asks for — scope, ambiguity, test volume — and keeps edits surgical,
-not whole-file rewrites. Read it before your first spawn.
+`spec-blocks.md` (same directory), verbatim: it fences the change to
+what the task asks for — scope, ambiguity, test volume — and keeps
+edits surgical, not rewrites. Read it before your first spawn.
 
 ## Spawn economics
 
 Every spawn pays a fixed overhead (system prompt, project rules, tool
 schemas) first. Batch similar mechanical steps into ONE worker with a
-checklist; spawn separately only when true parallelism or isolation
-pays that back. Read-only agents share the repo; parallel EDITORS each
+checklist; spawn separately only when parallelism or isolation pays
+that back. Read-only agents share the repo; parallel EDITORS each
 run with `isolation: "worktree"`.
 
 ## Keep working while workers run
 
 A spawn is not a pause: while a wave runs, write the next phase's spec
-or the verifier brief. Results arrive as notifications.
+or the verifier brief; results arrive as notifications.
 
 ## Forks
 
@@ -66,7 +67,7 @@ solo work — phases go to workers with specs.
 
 NAME every substantive worker (implementation, review, research,
 verification): named teammates run in tmux panes the user watches
-live; an unnamed subagent is a silent spinner until it returns. Only
+live; an unnamed one is a silent spinner until it returns. Only
 sub-minute lookups stay unnamed. Steer a running teammate with
 SendMessage; on an ACCEPTED report with no follow-up planned,
 dismiss it: `{"type": "shutdown_request"}`. Dismissal is final, so
@@ -79,20 +80,19 @@ fable spawns START at `high`, and "unsure → round UP" stops there:
 `xhigh`/`max` on fable only for irreversible work, architecture, or
 the largest closes. A fable VERIFIER defaults to `high`, `max` only
 for irreversible or architecture closes; sonnet, opus and the opus
-verifier keep the core's scale. A fable spawn at xhigh/max writing a
+verifier keep the core scale. A fable spawn at xhigh/max writing a
 report, spec or large file carries the LONG OUTPUT block from
-`spec-blocks.md` — otherwise it drafts the deliverable twice, once in
-reasoning and again as the reply.
+`spec-blocks.md` (same directory) — otherwise it drafts the
+deliverable twice, in reasoning and again as the reply.
 
 ## Verification procedure
 
 The verifier is FRESH — it has not worked on the task. Give it the
-original request, the ledger path, and the work-product paths (diffs,
-reports, not the raw scratch dump). It reads from disk; its only job
-is to find what is missing, wrong or unaddressed, item by item — and
-only it closes `V.`. Effort follows the blast-radius scale above.
-Findings become new phases; re-verify. CAP 3 cycles, then STOP and
-report the open items.
+original request, the ledger path and the work-product paths (diffs,
+reports, not the raw scratch dump). It reads from disk to find what
+is missing, wrong or unaddressed, item by item; only it closes `V.`.
+Effort follows the blast-radius scale above. Findings become new
+phases; re-verify. CAP 3 cycles, then STOP and report the open items.
 
 ## Declines — fix the input
 
@@ -107,7 +107,7 @@ STOPS the work: tell the user. Security review stays on opus.
 
 Consume briefs + verbatim snippets; bulk stays on disk. When a
 decision hinges on short exact content, read it yourself — never on a
-summary of a source that fits in a few hundred lines.
-Prefer per-task sessions: ledger and scratch survive /clear — finish
-a task, close it, start the next clean. Your closing recap walks the
-WHOLE ledger, item by item.
+summary of a source that fits in a few hundred lines. Prefer per-task
+sessions: ledger and scratch survive /clear — finish a task, close it,
+start the next clean. Drop closed-phase raw material. Your closing
+recap walks the WHOLE ledger, item by item.
