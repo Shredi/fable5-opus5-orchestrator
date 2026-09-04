@@ -190,7 +190,41 @@ Write <path>
 
 `LEDGER_WRITE_GUARD=0` disables it. It only reads — no lock needed — so it runs identically on macOS/Linux/Windows.
 
-A sixth hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its final report is accepted.
+### 4 · Cold-cache guard
+
+The guards above protect the *workflow*. This one protects the *limit*, and it exists because an audit of one chair's traffic found the money somewhere nobody looks — not in long sessions or big outputs, but in short messages typed into old ones.
+
+Across 4,238 chair messages from 39 sessions (Aug 2026 onward), **99 messages — 2.3% of them — carried 66.1% of every cache-write token the chair spent**. Sorted differently: the first message after an idle gap longer than 60 minutes accounted for **51.4% of all chair cache-write tokens** (11,142k of 21,666k), which works out to roughly **27% of the chair's entire cost proxy**. The ten largest single events were morning resumes of 252k–808k-token contexts after gaps of 1.9 to 118 hours. A subscription session writes its cache at the 1-hour TTL, where a re-cached context token costs about **0.4 output tokens of limit** — so one "quick question" typed into yesterday's 400k-token session burns more limit than an hour of actual work.
+
+Nothing restarts in that scenario: the tab stays open across sleep, the session never ends, `SessionStart` never fires again. `UserPromptSubmit` is the only event on that path. Its sibling — `claude --resume` on yesterday's session — *is* covered as well, because the activity stamps survive the marker rewrite that every SessionStart performs.
+
+```
+prompt submitted
+  │
+  ├─ starts with "/" · empty · teammate · FABLE_ORCH_COLD_GUARD=0 ... PASS  (unconditional)
+  ├─ idle gap < FABLE_ORCH_COLD_MIN (55 min) ........................ PASS  (cache still warm)
+  ├─ no session marker, or no usage in the transcript ............... PASS  (fail open)
+  ├─ blocked less than FABLE_ORCH_COLD_ACK_MIN (3 min) ago .......... PASS  (you said yes)
+  │
+  ├─ cold, ctx ≥ FABLE_ORCH_COLD_WARN_TOKENS (50k) .................. WARN  one line to you, one
+  │                                                                        to the chair: re-read
+  │                                                                        the ledger, finish or
+  │                                                                        hand over
+  │
+  └─ cold, ctx ≥ FABLE_ORCH_COLD_BLOCK_TOKENS (150k) ............... BLOCK  "this session holds
+                                                                            ~412k tokens and was
+                                                                            idle 9 h 12 min ..."
+                                                                            → /clear, or re-send
+                                                                              the same message
+```
+
+*Idle gap* is measured from the last turn-end (the `Stop` hook stamps it into the session marker) or the last prompt that actually reached the model, whichever is later — a **blocked** prompt never reaches it, so the gap keeps growing instead of resetting. *Context size* is the last assistant message's `input + cache_creation + cache_read` tokens, read from the **tail** of the transcript, never the whole file (they reach tens of MB).
+
+**`/clear`, not `/compact`.** Compaction re-reads and re-writes the whole context to produce its summary — it pays the very bill this guard is about, and loses detail on top. The ledger on disk is what carries the task into a fresh session, which is why the block message names it.
+
+**It is a time heuristic, and says so.** No API reports prompt-cache state, so the guard infers coldness from the documented 1-hour TTL. It can be wrong in both directions: a warm cache blocked costs one re-send (three minutes of patience), a cold one missed costs nothing worse than today's behaviour.
+
+A seventh hook (`SessionEnd`) cleans up after the session: its temp files and **its tmux teammates**. The agent-teams backend parks teammates in tmux panes and never reaps them (measured in the wild: 63 orphaned agents holding ~5 GB; later, 9 panes parked for 11-30 hours) — on current Claude Code those panes sit inside **your own default tmux server**, on older versions in dedicated `claude-swarm-*` servers. The hook kills the session's own teammates wherever they live: the legacy `claude-swarm-<pid>` server whole (matched via the hook's nearest-claude ancestor or the `@session-<id>` pane tag), and on shared servers only the PANES carrying this session's `--parent-session-id` — a non-swarm server itself is never killed. Swarm servers idle 48h+ are swept too. Finished teammates don't wait for a SessionEnd that may be days away: a rate-limited sweep piggybacked on the Stop hook samples every teammate pane's CPU and kills panes idling below ~1% CPU for `FABLE_ORCH_TEAMMATE_IDLE_H` hours (default 1). A parked teammate still burns a mailbox-polling heartbeat, so idleness is a sustained low RATE, not a frozen clock — working siblings re-baseline and survive. The injected profile adds the front line: the chair dismisses a teammate (`shutdown_request`) the moment its final report is accepted.
 
 ## Fable 5.1 adjustments (2026-09)
 
@@ -291,12 +325,17 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ FABLE_ORCH_SWARM_MAX_IDLE_H   │ 48                 │ sweep swarms idle ≥ N hours; 0 disables    │
 │ FABLE_ORCH_TEAMMATE_IDLE_H    │ 1                  │ kill teammate panes idle ≥ N hours; 0 off  │
 │ FABLE_ORCH_TEAMMATE_IDLE_RATE │ 0.01               │ cpu-sec/sec under which a pane is idle     │
+│ FABLE_ORCH_COLD_GUARD         │ (on)               │ 0 disables the cold-cache guard entirely   │
+│ FABLE_ORCH_COLD_MIN           │ 55                 │ idle minutes after which the cache is cold │
+│ FABLE_ORCH_COLD_BLOCK_TOKENS  │ 150000             │ cold context at/above this blocks; 0 off   │
+│ FABLE_ORCH_COLD_WARN_TOKENS   │ 50000              │ cold context at/above this warns; 0 off    │
+│ FABLE_ORCH_COLD_ACK_MIN       │ 3                  │ minutes a blocked prompt can be re-sent    │
 └───────────────────────────────┴────────────────────┴────────────────────────────────────────────┘
 ```
 
-**The session marker.** The SessionStart injector writes a per-session temp file whose immutable `started` timestamp survives resume/clear/compact re-injections, and the SessionEnd reaper anchors its cleanup to it. The same file carries the D1 `ledger` binding: bound → the close guard holds only that ledger; a marker that exists but was never bound → the close guard never holds it; no marker at all (manual install) → the original mtime-ownership rule (ledger touched after the session started). The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
+**The session marker.** The SessionStart injector writes a per-session temp file whose immutable `started` timestamp survives resume/clear/compact re-injections, and the SessionEnd reaper anchors its cleanup to it. It also carries the cold-cache guard's activity stamps (`last_stop`, `last_prompt`) and, while a block is outstanding, its acknowledgement. The same file carries the D1 `ledger` binding: bound → the close guard holds only that ledger; a marker that exists but was never bound → the close guard never holds it; no marker at all (manual install) → the original mtime-ownership rule (ledger touched after the session started). The SessionEnd hook removes the session's temp files and sweeps any older than 96 hours.
 
-**Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per model, mid-session profile switches, spawn/task denies and passes, stop blocks and suppressions, reaps. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
+**Metrics.** Every hook appends one event line to `~/.claude/fable-orch/metrics.jsonl` (events only — never prompt content): injections per model, mid-session profile switches, spawn/task denies and passes, stop blocks and suppressions, reaps, and cold-cache blocks/warns/acks with the context size and idle gap behind each one. `python3 scripts/stats.py` prints the summary, so the next "how is this performing?" question is answered with data. Disable with `FABLE_ORCH_METRICS=0`.
 
 ## Tests
 
@@ -304,7 +343,7 @@ Set these in `~/.claude/settings.json` under `"env"`.
 python3 -m pytest tests/ -q
 ```
 
-The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — the spawn threshold and its env override, the fork exemption, Workflow script gating, the task-list gate (counting, one deny per session, session isolation), the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, metrics emission and opt-out, injection, the mid-session profile-switch delta, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH). A second layer pins the *content*: the cores stay under their size budget, both keep requiring the playbook skill, and the decisions that survived the diet (fresh-eyes on every close, the fork cap, the report cap, the batching rule) plus the Fable 5.1 additions (ledger assumptions, the whole-ledger recap, the fable effort floor, the decline false-positive check, the worker spec blocks) are asserted line by line.
+The hooks are plain stdin/stdout JSON filters; the tests run them end-to-end as subprocesses — the spawn threshold and its env override, the fork exemption, Workflow script gating, the task-list gate (counting, one deny per session, session isolation), the upward ledger search and its repo-root/worktree/$HOME boundaries, stop-guard session scoping and ownership, the cold-cache bands (slash commands and teammates never blocked, the ack window and its expiry, tail-only transcript reads, fail-open on every corrupt input), metrics emission and opt-out, injection, the mid-session profile-switch delta, cache cleanup, and teammate reaping (against a fake tmux/ps on PATH). A second layer pins the *content*: the cores stay under their size budget, both keep requiring the playbook skill, and the decisions that survived the diet (fresh-eyes on every close, the fork cap, the report cap, the batching rule) plus the Fable 5.1 additions (ledger assumptions, the whole-ledger recap, the fable effort floor, the decline false-positive check, the worker spec blocks) are asserted line by line.
 
 The hooks decide "chair or teammate?" by walking the real process tree, so the suite pins that ambient too — otherwise running the tests from inside a named teammate makes every chair-behaviour test fail for a reason unrelated to the code.
 
@@ -316,6 +355,9 @@ The hooks decide "chair or teammate?" by walking the real process tree, so the s
 - Chair detection knows two chairs: Fable (primary) and Opus (limit fallback). Any other session model gets the Fable profile, and the 1500-char spawn gate applies everywhere. A mid-session `/model` switch only re-profiles at the next session start — `FABLE_ORCH_PROFILE=opus` pins it immediately for the next fires.
 - Enforcement is only as strong as the host's hook pipeline — on at least one experimental spawn backend we observed an async `Agent` launch proceed despite the guard's deny; verify once on your setup.
 - Pane idleness is a CPU-rate heuristic: a teammate parked below ~1% CPU for the idle window is reaped, so one blocked for hours inside a single quiet external wait (a long remote build) can be killed mid-wait — raise `FABLE_ORCH_TEAMMATE_IDLE_H`, lower `FABLE_ORCH_TEAMMATE_IDLE_RATE`, or disable with `FABLE_ORCH_TEAMMATE_IDLE_H=0` for such workloads. A reaped teammate can no longer be resumed with SendMessage.
+- The cold-cache guard cannot observe the prompt cache; it infers coldness from elapsed time against the 1-hour TTL. A session resumed on a shorter TTL, or one whose cache was evicted early, is judged wrong — and a *warm* session idle past 55 minutes gets a block it didn't need (re-send to proceed). It also can't tell a local slash command from an expensive one: any `/`-prefixed prompt passes, and passing one resets the idle clock, so a `/help` right before a big message can hide a genuine cold resume.
+- Unverified: whether `!`-prefixed bash prompts and `#`-prefixed memory prompts fire `UserPromptSubmit` at all. If they do, the guard treats them like any other prompt and can block one, even though neither pays for a re-cache. `/`-prefixed commands are exempt by construction; these two forms are not.
+- Its context number is the last assistant message's usage in the transcript, not the request that is about to be sent: work added since that message (a large paste, a re-read file) is invisible, so the estimate is a floor.
 - The task guard counts tracker tasks, not work size: a solo multi-phase session that never creates tasks still slips through, and the deny is a single nudge per session, not a wall.
 - The orchestration discipline itself is prompt-level; the hooks fence exactly three failure points — the ones that get skipped the most.
 

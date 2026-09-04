@@ -169,6 +169,36 @@ def _read_marker(cache):
     return None, None, None, None
 
 
+# Keys in the marker that belong to OTHER hooks and that this rewrite
+# must carry forward untouched. The cold-cache guard's activity stamps
+# live here: `last_stop` (written by the Stop hook), `last_prompt`
+# (written by the guard itself), and the `cold_ack`/`cold_ctx` pair of an
+# outstanding block. SessionStart re-fires on resume/clear/compact and
+# rebuilds this file from a whitelist, so a key not named here is
+# silently dropped — which for the stamps meant that a `claude --resume`
+# of yesterday's 400k-token session lost its idle baseline and sailed
+# through the guard on exactly the message the guard exists for.
+CARRIED_KEYS = ("last_stop", "last_prompt", "cold_ack", "cold_ctx")
+
+
+def _carried(cache):
+    """The CARRIED_KEYS present in the marker, or {} if unreadable.
+
+    A second tiny read rather than a wider `_read_marker` signature: this
+    hook has no business interpreting those values, only preserving
+    them."""
+    if not cache:
+        return {}
+    try:
+        with open(cache, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    return {k: d[k] for k in CARRIED_KEYS if k in d}
+
+
 # SessionStart fires after which the chair's own earlier reasoning may
 # be gone: `compact` rewrote the context, `resume` reloads a transcript
 # this model never actually thought through. The ledger on disk is what
@@ -366,6 +396,10 @@ def main():
                       "started": round(started, 3), "profile": stored_profile}
             if prev_ledger:
                 marker["ledger"] = prev_ledger
+            # Same rule as `ledger`, for the same reason: this rewrite is
+            # a re-injection, not a new session, and every key another
+            # hook owns has to survive it. See CARRIED_KEYS.
+            marker.update(_carried(cache))
             # Atomic replace: a crash mid-write must never leave a
             # truncated marker. The tmp name keeps the fable-orch-*.json
             # shape so an orphan from a crash still matches the 96h sweep.
