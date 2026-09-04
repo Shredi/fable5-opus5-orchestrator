@@ -40,38 +40,35 @@ never dumps. Reports: ≤40 lines, verbatim over 10 lines to scratch +
 path (playbook contract).
 
 ## Rule 3 — spawn discipline
-Parallel EDITORS each get `isolation: "worktree"`; spawn independent
-agents in ONE message. BATCH similar mechanical lookups into ONE
-worker — five greps is one agent, not five. NAME every substantive
-worker; only sub-minute lookups stay unnamed. Steer via SendMessage;
-dismiss an accepted worker with `{"type": "shutdown_request"}`. Impl
-specs carry the playbook's SCOPE + EDITS block.
+Before spawning a generic worker, check the project's agent roster —
+CLAUDE.md's `## Orchestrator agents` section plus auto-discovered
+`.claude/agents/` — and prefer a matching specialized agent via
+`subagent_type`. Parallel EDITORS each get `isolation: "worktree"`;
+spawn independent agents in ONE message. BATCH similar mechanical
+lookups into ONE worker — five greps is one agent, not five. NAME
+every substantive worker; only sub-minute lookups stay unnamed. Steer
+via SendMessage; dismiss an accepted worker with `{"type":
+"shutdown_request"}`. Impl specs carry the playbook's SCOPE + EDITS
+block.
 
 ## Routing & effort
 Tier NAMES only — sonnet/opus/fable, never dated IDs, no haiku.
-Effort: low=mechanical, medium=routine spec, high=multi-file
-impl/debug/review, xhigh=hardest agentic work,
-max=architecture/migrations/security/escalations; unsure → round UP.
-sonnet carries the VOLUME: scan, fetch, mechanical edits, spec code,
-tests, briefs, standard review. opus takes predictably HARD work
-DIRECTLY — architecture, irreversible migrations, complex
-multi-system work, stubborn debugging — plus ALL security review and
-every sonnet "uncertain". fable is the escalation CEILING, spending
-the chair's own limit: fable spawns start at `high`, xhigh/max only
-for irreversible/architecture work (playbook: Fable-tier effort).
-Escalation is one-way: on a decline work the playbook's Declines rule
-before any rerun; a second decline STOPS the work — tell the user,
-never reword past a classifier.
+Workers and verifiers run at the chair's own effort level; effort is
+not selectable per spawn. sonnet carries the VOLUME: scan, fetch,
+mechanical edits, spec code, tests, briefs, standard review. opus
+takes predictably HARD work DIRECTLY — architecture, irreversible
+migrations, complex multi-system work, stubborn debugging — plus ALL
+security review and every sonnet "uncertain". fable is the escalation
+CEILING, spending the chair's own limit. Escalation is one-way: on a
+decline work the playbook's Declines rule before any rerun; a second
+decline STOPS the work — tell the user, never reword past a
+classifier.
 
 ## Verification — mandatory before closing
 EVERY close gets a FRESH verifier that did not build the work; only
-it closes `V.`. Effort scales with blast radius: `max` for
-architecture / irreversible / security / the largest closes, `high`
-for small, low-risk, non-security ones; a FABLE verifier instead
-defaults to `high`, `max` only for irreversible or architecture
-closes. Prefer opus — it spares the fable limit, security always.
-Findings become new phases; re-verify; CAP 3 cycles, then report
-open items.
+it closes `V.`. Prefer opus — it spares the fable limit, security
+always. Findings become new phases; re-verify; CAP 3 cycles, then
+report open items.
 
 ## Hygiene
 Per-task sessions — ledger + scratch live on disk, so /clear is

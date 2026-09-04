@@ -148,23 +148,49 @@ def test_closing_recap_covers_the_whole_ledger():
         assert "closing recap walks the WHOLE ledger" in _flat(_instr(name)), name
 
 
-def test_fable_tier_effort_rules_are_fable_only():
-    # fable spends the chair's own limit, so its floor is `high` and
-    # round-UP stops there; xhigh/max is reserved. The OPUS profile runs
-    # while the fable limit is spent — those rules would be dead text
-    # there, and its verifier scale stays exactly as it was.
-    fable = _flat(_instr("dynamic-workflow-fable.md"))
-    assert "fable spawns start at `high`, xhigh/max only for " \
-           "irreversible/architecture work" in fable
-    assert "a FABLE verifier instead defaults to `high`, `max` only for " \
-           "irreversible or architecture closes" in fable
-    book = _flat(_playbook())
-    assert "fable spawns START at `high`" in book        # the detail, in full
-    assert '"unsure → round UP" stops there' in book
+def test_effort_is_not_selectable_per_spawn():
+    # Verified fact (2026-09-04): the Agent tool has no effort
+    # parameter — prompt text like "work at medium effort" is ignored,
+    # and every worker inherits the chair's own effort. The old
+    # low/medium/high/xhigh/max scale and its fable/verifier variants
+    # promised a control that doesn't exist; both cores now say so in
+    # one sentence instead. Model routing (sonnet/opus/fable) is real
+    # and stays untouched by this pin.
+    sentence = "Workers and verifiers run at the chair's own effort " \
+        "level; effort is not selectable per spawn."
+    banned = (
+        "low=mechanical", "xhigh=hardest agentic work", "unsure → round UP",
+        "fable spawns start at `high`", "Effort scales with blast radius",
+        "a FABLE verifier instead defaults to `high`",
+    )
+    for name in CORES:
+        text = _flat(_instr(name))
+        assert sentence in text, name
+        for phrase in banned:
+            assert phrase not in text, f"{name}: {phrase!r} still present"
     opus = _flat(_instr("dynamic-workflow-opus.md"))
     assert "fable spawns start" not in opus
-    assert "`max` for architecture / irreversible / security / the " \
-           "largest closes" in opus            # opus verifier scale untouched
+    book = _flat(_playbook())
+    assert "fable spawns START at `high`" not in book
+    assert '"unsure → round UP" stops there' not in book
+    assert "Effort follows the blast-radius scale" not in book
+
+
+def test_project_agent_roster_is_checked_before_generic_spawn():
+    # Marc's decision (2026-09-04): a specialized project agent keeps
+    # bulky domain output off the chair and carries its own
+    # model:/effort: frontmatter — the chair should reach for one
+    # before writing a generic worker spec. The plugin itself stays
+    # generic and ships no domain agents (README).
+    sentence = "check the project's agent roster — CLAUDE.md's " \
+        "`## Orchestrator agents` section plus auto-discovered " \
+        "`.claude/agents/` — and prefer a matching specialized agent " \
+        "via `subagent_type`."
+    for name in CORES:
+        assert sentence in _flat(_instr(name)), name
+    book = _flat(_playbook())
+    assert "## Orchestrator agents" in book
+    assert "`.claude/agents/`" in book
 
 
 def test_decline_check_comes_before_the_other_tier():
