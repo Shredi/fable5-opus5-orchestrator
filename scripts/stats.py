@@ -39,6 +39,11 @@ def main():
     ledgers = Counter()
     swarm_reaped = 0
     panes_reaped = 0
+    # Cold-cache guard: tokens and list-price cost per band. A block whose
+    # ack never came is context the session did NOT re-write; an ack is
+    # the user deciding to pay it anyway.
+    cold_tokens = Counter()
+    cold_usd = defaultdict(float)
 
     for rec in records(path):
         event = rec.get("event") or "?"
@@ -57,6 +62,12 @@ def main():
             try:
                 swarm_reaped += int(rec.get("swarm_own") or 0)
                 swarm_reaped += int(rec.get("swarm_stale") or 0)
+            except (TypeError, ValueError):
+                pass
+        if event in ("cold_block", "cold_warn", "cold_ack"):
+            try:
+                cold_tokens[event] += int(rec.get("ctx_tokens") or 0)
+                cold_usd[event] += float(rec.get("est_usd") or 0)
             except (TypeError, ValueError):
                 pass
         if event == "teammate_reap":
@@ -98,6 +109,24 @@ def main():
         # tiers mid-flight.
         print(f"\nmid-session profile switches: {switches} "
               f"(short delta injected, not the full core)")
+
+    blocks = events.get("cold_block", 0)
+    warns = events.get("cold_warn", 0)
+    acks = events.get("cold_ack", 0)
+    if blocks or warns or acks:
+        print("\n== cold cache (idle resumes over the 1h cache TTL) ==")
+        for name in ("cold_block", "cold_warn", "cold_ack"):
+            if events.get(name):
+                print(f"{name:11} {events[name]:4}  "
+                      f"{cold_tokens[name] / 1000.0:8.0f}k ctx tokens  "
+                      f"~${cold_usd[name]:.2f} list")
+        # Each ack answers one earlier block, so the avoided figure is the
+        # blocked cost minus what was then acked through. Never negative:
+        # an ack can outlive its block's retention in this log.
+        avoided = max(0.0, cold_usd["cold_block"] - cold_usd["cold_ack"])
+        print(f"re-caches avoided: {max(0, blocks - acks)} of {blocks} blocks "
+              f"never acked, ~${avoided:.2f} list not re-written "
+              f"(~${cold_usd['cold_ack']:.2f} acked through)")
 
     if swarm_reaped:
         print(f"\ntmux teammate servers reaped: {swarm_reaped}")
