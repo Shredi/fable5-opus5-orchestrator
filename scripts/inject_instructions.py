@@ -54,6 +54,15 @@ three get the full core even when the profile changed. The switch note
 says "every other rule from the already-injected core profile stays in
 force", which is a lie the chair cannot detect if the core is gone.
 
+LEDGER REMINDER. On the two fires that can cost the chair its own
+earlier reasoning — `compact` (the context was rewritten) and `resume`
+(a transcript this model never thought through) — a session that
+already carries a ledger binding gets one extra line after the profile,
+naming that ledger's path. Fable 5.1 executes long horizons well but
+only from what is in front of it; the file on disk is what survived.
+Unbound sessions, startup/clear fires, and bindings whose file is gone
+or archived get nothing.
+
 TEAMMATE sessions are skipped entirely. Named agent-teams workers are
 full claude sessions and fire SessionStart like the chair does — but the
 profile is written for the chair alone: injected into a worker it says
@@ -158,6 +167,37 @@ def _read_marker(cache):
     except Exception:
         pass
     return None, None, None, None
+
+
+# SessionStart fires after which the chair's own earlier reasoning may
+# be gone: `compact` rewrote the context, `resume` reloads a transcript
+# this model never actually thought through. The ledger on disk is what
+# survives both — so a session already BOUND to one is pointed back at
+# it, right after the profile. `startup` and `clear` open a new task,
+# where an old binding is not something to re-open.
+LEDGER_REMINDER_FIRES = ("compact", "resume")
+
+
+def ledger_reminder(fire, ledger):
+    """The 'your ledger is still on disk' line, or '' when it doesn't apply.
+
+    Only for a session that already carries a `ledger` binding (written
+    by the write guard / spawn-guard adoption): with no binding there is
+    no path to name, and pointing an unbound session at a stale ledger
+    would hand it another task's requirements.
+
+    A binding can also outlive what it points at — the file was deleted,
+    or retired by the `-archive.md` rename the close guard honours. Both
+    are silent: naming a path that no longer holds the task's
+    requirements is worse than saying nothing."""
+    path = str(ledger or "").strip()
+    if fire not in LEDGER_REMINDER_FIRES or not path:
+        return ""
+    if path.endswith("-archive.md") or not os.path.isfile(path):
+        return ""
+    return (f"Live ledger for this session: {path} — re-read it before "
+            "your next decision; reasoning from before this point may be "
+            "gone.")
 
 
 TEAMMATE_DETECT_BUDGET = 1.5  # seconds; the walk measures ~5ms in practice
@@ -283,6 +323,13 @@ def main():
                 text = f.read()
         except Exception:
             return  # never break session start
+        # Appended AFTER the profile (full core or switch delta), so the
+        # last thing a compacted/resumed chair reads is where its own
+        # requirements live. No-op for an unbound session and for
+        # startup/clear.
+        reminder = ledger_reminder(fire, prev_ledger)
+        if reminder:
+            text = text.rstrip("\n") + "\n\n" + reminder + "\n"
 
     # Session marker for the guards (best effort; never fatal).
     # `started` marks the session's FIRST start and must survive the

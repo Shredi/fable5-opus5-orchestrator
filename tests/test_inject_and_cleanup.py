@@ -1,7 +1,7 @@
 import json
 import os
 
-from conftest import POSIX, REPO, run_hook
+from conftest import POSIX, REPO, run_hook, write_marker
 
 INJECT = "inject_instructions.py"
 CLEANUP = "cleanup_session_cache.py"
@@ -43,6 +43,10 @@ def test_cores_stay_on_the_token_diet():
     # 10,069 and silently stopped reaching the chair at all). v0.15.0
     # moved the detail to the playbook skill, which loads on demand —
     # the core is a summary now, and this pin keeps it one.
+    # The Fable 5.1 rules (ledger ASSUMPTIONs, whole-ledger recap, fable
+    # effort floor, fable verifier default, decline check) fit inside it:
+    # each states the RULE in one line and points at the playbook section
+    # holding the detail, the same trade the v0.15.0 diet made.
     for name in CORES:
         text = _instr(name)
         assert len(text) < 4000, f"{name} is {len(text)} chars — over the 4k core diet"
@@ -66,6 +70,13 @@ def test_playbook_skill_exists_and_stays_bounded():
     text = path.read_text(encoding="utf-8")
     assert len(text) < 5000, f"SKILL.md is {len(text)} chars — over the 5k budget"
     assert "name: playbook" in text  # the namespaced literal below depends on it
+    # The paste-ready blocks sit beside SKILL.md and are read only when a
+    # spawn needs them — but without a budget of their own the 5k pin
+    # above just moves text one file to the right.
+    blocks = REPO.joinpath("skills", "playbook", "spec-blocks.md")
+    assert blocks.is_file(), f"missing paste-ready blocks: {blocks}"
+    body = blocks.read_text(encoding="utf-8")
+    assert len(body) < 3500, f"spec-blocks.md is {len(body)} chars — over its 3.5k budget"
 
 
 def test_cores_require_the_playbook_before_first_delegation():
@@ -113,6 +124,85 @@ def test_preserved_decisions_survive_the_diet():
     assert "at most 2 per session" in book          # fork cap, in full
     assert "at most 40 lines TOTAL" in book         # report diet, in full
     assert "at most 10 lines inline" in book        # verbatim spill rule
+
+
+# --- Fable 5.1 prompting pass (2026-09): the rules the guide added ---
+
+def test_ambiguity_becomes_a_ledger_assumption():
+    # The harness now tells the chair the user isn't watching, so
+    # "ambiguity → ASK THE USER" stalls the work instead of resolving
+    # it. The ledger carries the reading instead, where the user rules
+    # on it at the plan checkpoint. Guide: "Delivering work".
+    for name in CORES:
+        text = _flat(_instr(name))
+        assert "ambiguity → ASK THE USER" not in text, f"{name}: old ask-rule back"
+        assert "AMBIGUITY: ask only when the readings mean materially " \
+               "different work" in text, name
+        assert "`- [ ] N. ASSUMPTION: <reading>`" in text, name
+
+
+def test_closing_recap_covers_the_whole_ledger():
+    # Fable 5.1 writes a final message that covers only the last step;
+    # the ledger is the antidote — the recap walks every item.
+    for name in CORES:
+        assert "closing recap walks the WHOLE ledger" in _flat(_instr(name)), name
+
+
+def test_fable_tier_effort_rules_are_fable_only():
+    # fable spends the chair's own limit, so its floor is `high` and
+    # round-UP stops there; xhigh/max is reserved. The OPUS profile runs
+    # while the fable limit is spent — those rules would be dead text
+    # there, and its verifier scale stays exactly as it was.
+    fable = _flat(_instr("dynamic-workflow-fable.md"))
+    assert "fable spawns start at `high`, xhigh/max only for " \
+           "irreversible/architecture work" in fable
+    assert "a FABLE verifier instead defaults to `high`, `max` only for " \
+           "irreversible or architecture closes" in fable
+    book = _flat(_playbook())
+    assert "fable spawns START at `high`" in book        # the detail, in full
+    assert '"unsure → round UP" stops there' in book
+    opus = _flat(_instr("dynamic-workflow-opus.md"))
+    assert "fable spawns start" not in opus
+    assert "`max` for architecture / irreversible / security / the " \
+           "largest closes" in opus            # opus verifier scale untouched
+
+
+def test_decline_check_comes_before_the_other_tier():
+    # A decline is often the input's fault, not the wording's: strip the
+    # documented false-positive causes and the SAME tier may take it.
+    # Only then does the unchanged rerun on another tier apply, and a
+    # second decline still stops the work. Guide: "Reduce safeguard
+    # false positives".
+    for name in CORES:
+        text = _flat(_instr(name))
+        assert "on a decline work the playbook's Declines rule before " \
+               "any rerun" in text, name
+        assert "second decline STOPS the work" in text, name
+    book = _flat(_playbook())
+    assert "rerunning the SAME tier fixes the input" in book
+    assert "rerun UNCHANGED on another tier" in book
+    assert "base64 in tool output" in book
+    assert '"does this compile" phrasing' in book
+    assert "a lesser-known language with no docs" in book
+    assert "Security review stays on opus" in book
+
+
+def test_playbook_carries_the_worker_spec_and_long_output_blocks():
+    # Every implementation spawn is fenced to the task, and a fable
+    # spawn at xhigh/max that writes a long deliverable is told not to
+    # draft it twice. The paste-ready wording lives beside the skill so
+    # SKILL.md stays a contract, not a prompt library.
+    book = _flat(_playbook())
+    assert "Worker spec boilerplate" in book
+    assert "SCOPE + EDITS block" in book
+    assert "LONG OUTPUT block" in book
+    assert "A spawn is not a pause" in book          # chair keeps working
+    blocks = REPO.joinpath("skills", "playbook", "spec-blocks.md")
+    assert blocks.is_file(), f"missing paste-ready blocks: {blocks}"
+    text = _flat(blocks.read_text(encoding="utf-8"))
+    assert "don't turn scratch checks into additional permanent test files" in text
+    assert "surgically edit a file rather than rewrite the entire thing" in text
+    assert "Usually it is not needed to draft an output multiple times." in text
 
 
 def test_injects_the_fable_profile(tmp_path):
@@ -439,6 +529,93 @@ def test_gated_full_core_is_not_counted_as_a_switch(tmp_path):
     lines = (home / ".claude" / "fable-orch" / "metrics.jsonl").read_text(
         encoding="utf-8").strip().splitlines()
     assert [json.loads(l)["event"] for l in lines] == ["inject", "inject"]
+
+
+# --- ledger reminder: compaction takes the reasoning, not the file ---
+
+def _bind(tmp_path, sid, profile="fable", model="claude-fable-5"):
+    """A marker for an existing session already BOUND to a ledger."""
+    ledger = tmp_path / ".workflow" / f"LEDGER-{sid}.md"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("- [ ] 1. item\n", encoding="utf-8")
+    write_marker(tmp_path, started=123.0, session=sid, ledger=ledger,
+                 model=model, profile=profile)
+    return ledger
+
+
+def test_compact_points_a_bound_session_back_at_its_ledger(tmp_path):
+    # `compact` fires BECAUSE the context was rewritten: the reasoning
+    # that produced the last decisions may be gone, while the ledger on
+    # disk is intact. The chair is told where it is, by exact path.
+    ledger = _bind(tmp_path, "s-led-c")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-c",
+                                         "source": "compact"}))
+    assert "(FABLE profile)" in text          # full core, unchanged gating
+    assert f"Live ledger for this session: {ledger} — re-read it" in text
+    assert "reasoning from before this point may be gone." in text
+
+
+def test_startup_and_clear_get_no_ledger_reminder(tmp_path):
+    # A `startup` (or `clear`) fire opens a NEW task; re-opening the
+    # previous one's ledger would hand the chair someone else's
+    # requirements. Only compact/resume lose context mid-task.
+    ledger = _bind(tmp_path, "s-led-s")
+    for fire in ("startup", "clear", None):
+        payload = {"model": "claude-fable-5", "session_id": "s-led-s"}
+        if fire:
+            payload["source"] = fire
+        text = context_of(_inject(tmp_path, payload))
+        assert "Live ledger for this session" not in text, fire
+        assert str(ledger) not in text, fire
+
+
+def test_reminder_is_dropped_when_the_ledger_is_gone_or_archived(tmp_path):
+    # A binding outlives its file: the ledger was deleted, or retired by
+    # the `-archive.md` rename the close guard honours. Naming either
+    # sends the chair to a file that no longer speaks for the task, so
+    # the line is dropped — the rest of the profile is unaffected.
+    ledger = _bind(tmp_path, "s-led-gone")
+    ledger.unlink()
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-gone",
+                                         "source": "compact"}))
+    assert "(FABLE profile)" in text
+    assert "Live ledger for this session" not in text
+
+    retired = tmp_path / ".workflow" / "LEDGER-old-archive.md"
+    retired.write_text("- [x] 1. done\n", encoding="utf-8")
+    write_marker(tmp_path, started=123.0, session="s-led-arch", ledger=retired,
+                 model="claude-fable-5", profile="fable")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-arch",
+                                         "source": "compact"}))
+    assert "Live ledger for this session" not in text
+
+
+def test_compact_without_a_binding_says_nothing(tmp_path):
+    # No binding means no path to name — and never a guess at one.
+    write_marker(tmp_path, started=123.0, session="s-led-u",
+                 model="claude-fable-5", profile="fable")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-u",
+                                         "source": "compact"}))
+    assert "Live ledger for this session" not in text
+
+
+def test_switch_delta_still_carries_the_ledger_reminder(tmp_path):
+    # The reminder rides on the FIRE, not on the profile: a resume that
+    # ALSO switches chairs sends the delta plus the ledger line, in that
+    # order — the delta is the news, the ledger is where to resume from.
+    ledger = _bind(tmp_path, "s-led-sw")
+    text = context_of(_inject(tmp_path, {"model": "claude-opus-5",
+                                         "session_id": "s-led-sw",
+                                         "source": "resume"}))
+    assert "Profile switch → OPUS chair" in text
+    assert "(OPUS profile)" not in text       # still a delta, not a core
+    assert f"Live ledger for this session: {ledger} — re-read it" in text
+    assert text.index("Profile switch") < text.index("Live ledger")
+    assert _marker(tmp_path, "s-led-sw")["ledger"] == str(ledger)
 
 
 @POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
