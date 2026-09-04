@@ -42,8 +42,15 @@ def main():
     # Cold-cache guard: tokens and list-price cost per band. A block whose
     # ack never came is context the session did NOT re-write; an ack is
     # the user deciding to pay it anyway.
+    #
+    # Counted per DISTINCT context, not per event: one session that walks
+    # away, comes back cold, gets blocked, walks away again and is blocked
+    # again logs two cold_block events for the same unwritten context —
+    # summing those would claim twice the re-cache was avoided.
     cold_tokens = Counter()
     cold_usd = defaultdict(float)
+    cold_distinct = Counter()
+    cold_seen = set()
 
     for rec in records(path):
         event = rec.get("event") or "?"
@@ -66,8 +73,13 @@ def main():
                 pass
         if event in ("cold_block", "cold_warn", "cold_ack"):
             try:
-                cold_tokens[event] += int(rec.get("ctx_tokens") or 0)
-                cold_usd[event] += float(rec.get("est_usd") or 0)
+                ctx = int(rec.get("ctx_tokens") or 0)
+                key = (event, rec.get("session"), ctx)
+                if key not in cold_seen:
+                    cold_seen.add(key)
+                    cold_distinct[event] += 1
+                    cold_tokens[event] += ctx
+                    cold_usd[event] += float(rec.get("est_usd") or 0)
             except (TypeError, ValueError):
                 pass
         if event == "teammate_reap":
@@ -110,23 +122,32 @@ def main():
         print(f"\nmid-session profile switches: {switches} "
               f"(short delta injected, not the full core)")
 
-    blocks = events.get("cold_block", 0)
-    warns = events.get("cold_warn", 0)
-    acks = events.get("cold_ack", 0)
+    blocks = cold_distinct.get("cold_block", 0)
+    warns = cold_distinct.get("cold_warn", 0)
+    acks = cold_distinct.get("cold_ack", 0)
     if blocks or warns or acks:
         print("\n== cold cache (idle resumes over the 1h cache TTL) ==")
         for name in ("cold_block", "cold_warn", "cold_ack"):
-            if events.get(name):
-                print(f"{name:11} {events[name]:4}  "
+            if cold_distinct.get(name):
+                n = cold_distinct[name]
+                repeats = events.get(name, 0) - n
+                extra = f" (+{repeats} repeat)" if repeats else ""
+                label = f"{n} context{'' if n == 1 else 's'}{extra}"
+                print(f"{name:11} {label:24}"
                       f"{cold_tokens[name] / 1000.0:8.0f}k ctx tokens  "
                       f"~${cold_usd[name]:.2f} list")
         # Each ack answers one earlier block, so the avoided figure is the
         # blocked cost minus what was then acked through. Never negative:
         # an ack can outlive its block's retention in this log.
         avoided = max(0.0, cold_usd["cold_block"] - cold_usd["cold_ack"])
-        print(f"re-caches avoided: {max(0, blocks - acks)} of {blocks} blocks "
-              f"never acked, ~${avoided:.2f} list not re-written "
+        print(f"re-caches avoided: {max(0, blocks - acks)} of {blocks} blocked "
+              f"contexts never acked, ~${avoided:.2f} list not re-written "
               f"(~${cold_usd['cold_ack']:.2f} acked through)")
+        stamp_failed = events.get("cold_stamp_failed", 0)
+        if stamp_failed:
+            # The guard passed instead of blocking: without a writable
+            # marker it cannot offer the re-send escape hatch.
+            print(f"blocks suppressed (marker unwritable): {stamp_failed}")
 
     if swarm_reaped:
         print(f"\ntmux teammate servers reaped: {swarm_reaped}")
