@@ -1,7 +1,7 @@
 import json
 import os
 
-from conftest import POSIX, REPO, run_hook
+from conftest import POSIX, REPO, run_hook, write_marker
 
 INJECT = "inject_instructions.py"
 CLEANUP = "cleanup_session_cache.py"
@@ -439,6 +439,70 @@ def test_gated_full_core_is_not_counted_as_a_switch(tmp_path):
     lines = (home / ".claude" / "fable-orch" / "metrics.jsonl").read_text(
         encoding="utf-8").strip().splitlines()
     assert [json.loads(l)["event"] for l in lines] == ["inject", "inject"]
+
+
+# --- ledger reminder: compaction takes the reasoning, not the file ---
+
+def _bind(tmp_path, sid, profile="fable", model="claude-fable-5"):
+    """A marker for an existing session already BOUND to a ledger."""
+    ledger = tmp_path / ".workflow" / f"LEDGER-{sid}.md"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("- [ ] 1. item\n", encoding="utf-8")
+    write_marker(tmp_path, started=123.0, session=sid, ledger=ledger,
+                 model=model, profile=profile)
+    return ledger
+
+
+def test_compact_points_a_bound_session_back_at_its_ledger(tmp_path):
+    # `compact` fires BECAUSE the context was rewritten: the reasoning
+    # that produced the last decisions may be gone, while the ledger on
+    # disk is intact. The chair is told where it is, by exact path.
+    ledger = _bind(tmp_path, "s-led-c")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-c",
+                                         "source": "compact"}))
+    assert "(FABLE profile)" in text          # full core, unchanged gating
+    assert f"Live ledger for this session: {ledger} — re-read it" in text
+    assert "reasoning from before this point may be gone." in text
+
+
+def test_startup_and_clear_get_no_ledger_reminder(tmp_path):
+    # A `startup` (or `clear`) fire opens a NEW task; re-opening the
+    # previous one's ledger would hand the chair someone else's
+    # requirements. Only compact/resume lose context mid-task.
+    ledger = _bind(tmp_path, "s-led-s")
+    for fire in ("startup", "clear", None):
+        payload = {"model": "claude-fable-5", "session_id": "s-led-s"}
+        if fire:
+            payload["source"] = fire
+        text = context_of(_inject(tmp_path, payload))
+        assert "Live ledger for this session" not in text, fire
+        assert str(ledger) not in text, fire
+
+
+def test_compact_without_a_binding_says_nothing(tmp_path):
+    # No binding means no path to name — and never a guess at one.
+    write_marker(tmp_path, started=123.0, session="s-led-u",
+                 model="claude-fable-5", profile="fable")
+    text = context_of(_inject(tmp_path, {"model": "claude-fable-5",
+                                         "session_id": "s-led-u",
+                                         "source": "compact"}))
+    assert "Live ledger for this session" not in text
+
+
+def test_switch_delta_still_carries_the_ledger_reminder(tmp_path):
+    # The reminder rides on the FIRE, not on the profile: a resume that
+    # ALSO switches chairs sends the delta plus the ledger line, in that
+    # order — the delta is the news, the ledger is where to resume from.
+    ledger = _bind(tmp_path, "s-led-sw")
+    text = context_of(_inject(tmp_path, {"model": "claude-opus-5",
+                                         "session_id": "s-led-sw",
+                                         "source": "resume"}))
+    assert "Profile switch → OPUS chair" in text
+    assert "(OPUS profile)" not in text       # still a delta, not a core
+    assert f"Live ledger for this session: {ledger} — re-read it" in text
+    assert text.index("Profile switch") < text.index("Live ledger")
+    assert _marker(tmp_path, "s-led-sw")["ledger"] == str(ledger)
 
 
 @POSIX  # fake `ps` fixture needs POSIX shebang+chmod exec
