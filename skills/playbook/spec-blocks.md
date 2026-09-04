@@ -33,7 +33,7 @@ The follow-ups it asks for land in section 5 of the output contract,
 "out of scope but noticed" — the report shape the chair already
 requires, so nothing extra needs saying in the spec.
 
-## LONG OUTPUT — add for a fable xhigh/max spawn writing a long deliverable
+## LONG OUTPUT — add for a fable spawn writing a long deliverable
 
 A report, a spec, a large file. The guide's `[max_tokens]` placeholder
 is the turn's own output limit in an agent session, so the block below
@@ -56,6 +56,3 @@ structure and other difficult decisions, and otherwise using the
 reasoning space to reason and the output space to write an output.
 Usually it is not needed to draft an output multiple times.
 ```
-
-Cheaper still: run that spawn at `high` unless the work genuinely needs
-xhigh/max — the guide's own first recommendation.

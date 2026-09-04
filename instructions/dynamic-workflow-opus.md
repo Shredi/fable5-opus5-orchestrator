@@ -42,19 +42,21 @@ never dumps. Reports: ≤40 lines, verbatim over 10 lines to scratch +
 path (playbook contract).
 
 ## Rule 3 — spawn discipline
-Parallel EDITORS each get `isolation: "worktree"`; spawn independent
-agents in ONE message. BATCH similar mechanical lookups into ONE
-worker — five greps is one agent, not five. NAME every substantive
-worker; only sub-minute lookups stay unnamed. Steer via SendMessage;
-dismiss an accepted worker with `{"type": "shutdown_request"}`. Impl
-specs carry the playbook's SCOPE + EDITS block.
+Before spawning a generic worker, check the project's agent roster —
+CLAUDE.md's `## Orchestrator agents` section plus auto-discovered
+`.claude/agents/` — and prefer a matching specialized agent via
+`subagent_type`. Parallel EDITORS each get `isolation: "worktree"`;
+spawn independent agents in ONE message. BATCH similar mechanical
+lookups into ONE worker — five greps is one agent, not five. NAME
+every substantive worker; only sub-minute lookups stay unnamed. Steer
+via SendMessage; dismiss an accepted worker with `{"type":
+"shutdown_request"}`. Impl specs carry the playbook's SCOPE + EDITS
+block.
 
 ## Routing & effort
 Tier NAMES only — sonnet/opus, never dated IDs, no haiku; the fable
-tier is RESTING, its roles fall to opus. Effort: low=mechanical,
-medium=routine spec, high=multi-file impl/debug/review,
-xhigh=hardest agentic work,
-max=architecture/migrations/security/escalations; unsure → round UP.
+tier is RESTING, its roles fall to opus. Workers and verifiers run at
+the chair's own effort level; effort is not selectable per spawn.
 sonnet carries the VOLUME: scan, fetch, mechanical edits, spec code,
 tests, briefs, standard review. opus is the CEILING while fable
 rests, and a first-class worker: predictably HARD work DIRECTLY —
@@ -66,10 +68,8 @@ tell the user, never reword past a classifier.
 
 ## Verification — mandatory before closing
 EVERY close gets a FRESH opus verifier that did not build the work;
-only it closes `V.`. Effort scales with blast radius: `max` for
-architecture / irreversible / security / the largest closes; `high`
-is allowed for small, low-risk, non-security closes. Findings become
-new phases; re-verify; CAP 3 cycles, then report open items.
+only it closes `V.`. Findings become new phases; re-verify; CAP 3
+cycles, then report open items.
 
 ## Hygiene
 Per-task sessions — ledger + scratch live on disk, so /clear is
