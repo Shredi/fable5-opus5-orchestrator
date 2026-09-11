@@ -34,12 +34,20 @@ context, whatever its operands:
     - `sudo`, `command -p`, `env -i …`, a literal `/bin/rm` path
       (all three sidestep the PATH shim of Layer B)
     - inside `bash -c` / `sh -c` / `zsh -c` / `dash -c` / `ksh -c`
-    - inside `eval`, `xargs`, `find … -exec`/`-execdir`
-    - `find … -delete`
+    - inside `eval`, `xargs`
+    - inside a function body (`f(){ rm -rf $1; }`) with an operand this
+      guard cannot see through — the body is analysed like a `-c` string
+    - behind an applet multiplexer (`busybox rm`, `toybox rm`) or a
+      variable command word (`$RM -rf …`)
+    - on `*`, `.` or `..` after a `cd` earlier in the same line, where
+      the payload's `cwd` no longer says where the rm lands
     - inside a REMOTE command string (`ssh …`, `docker exec …`,
       `kubectl exec …`) — Layer B lives on THIS machine only, so a
       remote recursive rm has no runtime net underneath it at all
-Also denied, same prefix: `git clean` with a variable/empty operand,
+Also denied, same prefix: `git clean` with a variable/empty operand or
+an `-e`/`--exclude` pattern, `find … -delete` / `find … -exec rm -r`
+whose start path is a variable, a protected directory or outside the
+allowed roots,
 `dd of=/dev/…` (or a variable `of=`), any `mkfs*`, `diskutil erase*` /
 `zeroDisk` / `secureErase` / `partitionDisk`, `chmod -R` / `chown -R`
 on a protected path or a variable, `truncate -s 0` on a variable,
@@ -47,17 +55,21 @@ on a protected path or a variable, `truncate -s 0` on a variable,
 mentioning `SAFE_RM_DRYRUN` or `SAFE_RM_BYPASS` (the shim's dry-run
 switch is for the test suite; there is no in-band bypass).
 
-ASK (permissionDecision "ask") for the one case that is dangerous but
+ASK (permissionDecision "ask") for the cases that are dangerous but
 legitimate: a recursive `rm` on a LITERAL path that resolves outside
 the allowed roots (the payload's `cwd`, $TMPDIR, /tmp, /private/tmp,
-/var/folders, ~/.claude, ~/.workflow, ~/Documents/git). Inside them —
-`rm -rf .workflow/scratch/x` — it stays silent.
+/var/folders, ~/.claude, ~/.workflow, ~/Documents/git), and a
+`find … -delete` / `find … -exec rm -r` whose every start path is a
+literal INSIDE those roots. Inside them — `rm -rf .workflow/scratch/x`
+— a plain rm stays silent.
 
 ALLOW (no output) everything else. Non-recursive `rm`, `trash`, `git
 status`, a recursive rm under cwd: all pass untouched.
 
-PATH injection: when a command mentions the standalone word `rm` and
-is NOT denied, the guard returns
+PATH injection: when a command actually CALLS `rm` — an rm command word
+in some parsed segment, a `-c` body, an xargs/eval tail or a
+`find -exec`, never merely the letters inside `git commit -m 'rm -rf
+cleanup'` — and is NOT denied, the guard returns
 `hookSpecificOutput.updatedInput.command` with
 `export PATH="$HOME/.claude/guard/bin:$PATH"; ` prepended, so Layer B
 is in front of `/bin/rm` for that call even if the session's env file
@@ -111,10 +123,21 @@ GLOB_CHARS = "*?["
 RECURSIVE_RE = re.compile(r"^-[A-Za-z]*[rR][A-Za-z]*$")
 # `> $VAR`, `: > $VAR`, `>| $VAR` — truncation of a target that is a BARE
 # variable (or a command substitution). `> "$TMP/out.txt"` is a normal
-# write to a known-shaped path and stays allowed.
+# write to a known-shaped path and stays allowed. The `(?<!>)` is what
+# keeps `>> $LOG` out: an append truncates nothing, and without the
+# lookbehind the SECOND `>` of `>>` matches this pattern.
 REDIRECT_VAR_RE = re.compile(
-    r">\|?\s*([\"']?)(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|`[^`]*`)\1\s*(?:$|[;&|\n])")
-RM_WORD_RE = re.compile(r"(?<![A-Za-z0-9_])rm(?![A-Za-z0-9_])")
+    r"(?<!>)>\|?\s*([\"']?)(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|`[^`]*`)\1\s*(?:$|[;&|\n])")
+# `name() {` / `function name {` — a function DEFINITION segment. Its body
+# is a command line in its own right (and `$1` inside it is the incident's
+# own shape), so it is analysed instead of being read as a command called
+# `f(){`.
+FUNC_DEF_RE = re.compile(
+    r"^\s*(?:function\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:\(\s*\))?"
+    r"|[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\))\s*\{?\s*")
+# Applet multiplexers: `busybox rm -rf /` IS an rm.
+MULTIPLEXERS = frozenset(["busybox", "toybox"])
+CD_COMMANDS = frozenset(["cd", "pushd"])
 BYPASS_STRINGS = ("SAFE_RM_DRYRUN", "SAFE_RM_BYPASS")
 MAX_DEPTH = 4
 
@@ -319,7 +342,7 @@ def _glob_parent(op):
 
 # --- rm operand verdicts ---------------------------------------------------
 
-def _operand_verdict(op, cwd):
+def _operand_verdict(op, cwd, cwd_unknown=False):
     """(decision, kind) for ONE operand of a recursive rm, or None."""
     if op == "":
         return ("deny", "empty-operand")
@@ -327,6 +350,13 @@ def _operand_verdict(op, cwd):
         return ("deny", "variable-operand")
     if op.rstrip("/") in ("~", ""):
         return ("deny", "home-or-root")
+    # After a `cd` earlier in the same line the payload's cwd is a lie, so
+    # a relative operand names a directory nobody here can point at.
+    if cwd_unknown and not op.startswith("~") \
+            and not posixpath.isabs(op.replace("\\", "/")):
+        if (op.rstrip("/") or op) in ("*", ".", ".."):
+            return ("deny", "recursive-rm-in-unknown-cwd")
+        return ("ask", "relative-path-in-unknown-cwd")
     if any(c in op for c in GLOB_CHARS):
         parent = _glob_parent(op)
         target = _abspath(parent, cwd) if parent else _abspath(".", cwd)
@@ -378,6 +408,64 @@ def _has_recursive_rm(text, depth=0):
     return False
 
 
+def _func_body(seg):
+    """The body of a function-definition segment, or None. `f(){ rm -rf
+    $1; }; f ""` splits on `;` into `f(){ rm -rf $1` — without this the
+    segment reads as a command named `f(){` and the rm is never seen."""
+    m = FUNC_DEF_RE.match(seg)
+    if not m or m.end() == 0:
+        return None
+    body = seg[m.end():].strip()
+    return body or None
+
+
+def _strip_multiplexer(toks):
+    """`busybox rm -rf /` / `toybox rm …` — drop the multiplexer so the
+    applet behind it is judged as the command it is."""
+    while len(toks) > 1 and _base(toks[0]) in MULTIPLEXERS \
+            and not toks[1].startswith("-"):
+        toks = toks[1:]
+    return toks
+
+
+def _invokes_rm(text, depth=0):
+    """Does this line actually CALL `rm` — as a command word, in a `-c`
+    body, behind xargs/eval, in `find -exec`? Unlike a text match this is
+    false for `git commit -m 'rm -rf cleanup'`, `grep -r "rm -rf" docs/`
+    and `docker rm c`, none of which should be rewritten."""
+    if depth > MAX_DEPTH:
+        return False
+    for seg in _split_segments(text):
+        body = _func_body(seg)
+        if body is not None:
+            if _invokes_rm(body, depth + 1):
+                return True
+            continue
+        toks, _ = _strip_wrappers(_strip_assignments(_tokens(seg)))
+        toks = _strip_multiplexer(toks)
+        if not toks:
+            continue
+        name = _base(toks[0])
+        if name == "rm":
+            return True
+        if name in SHELLS:
+            for i, tok in enumerate(toks[1:], 1):
+                if tok == "-c" and i + 1 < len(toks):
+                    if _invokes_rm(toks[i + 1], depth + 1):
+                        return True
+                    break
+        elif name in ("eval", "xargs"):
+            if _invokes_rm(" ".join(toks[1:]), depth + 1):
+                return True
+        elif name == "find":
+            if _invokes_rm(" ".join(_find_exec_tail(toks)), depth + 1):
+                return True
+        for sub in _substitutions(seg):
+            if _invokes_rm(sub, depth + 1):
+                return True
+    return False
+
+
 def _strip_assignments(toks):
     i = 0
     while i < len(toks) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[i]):
@@ -412,7 +500,7 @@ def _strip_wrappers(toks):
     return toks, bypass
 
 
-def _check_rm(toks, cwd, bypass, literal_path):
+def _check_rm(toks, cwd, bypass, literal_path, cwd_unknown=False):
     if not any(_is_recursive(t) for t in toks[1:]):
         return None
     if bypass:
@@ -427,7 +515,7 @@ def _check_rm(toks, cwd, bypass, literal_path):
             continue
         if not seen_ddash and tok.startswith("-") and tok != "-":
             continue
-        worst = _worse(worst, _operand_verdict(tok, cwd))
+        worst = _worse(worst, _operand_verdict(tok, cwd, cwd_unknown))
     return worst
 
 
@@ -437,6 +525,12 @@ def _check_git(toks, cwd):
     for tok in toks[2:]:
         if "$" in tok or "`" in tok or tok == "":
             return ("deny", "git-clean-variable-operand")
+        # `-e <pattern>` reads as "keep this", so the operator's mental
+        # model of what survives is the pattern — and a pattern that
+        # matches nothing means the whole tree goes.
+        if tok == "--exclude" or tok.startswith("--exclude=") or (
+                tok.startswith("-") and not tok.startswith("--") and "e" in tok):
+            return ("deny", "git-clean-exclude")
     return None
 
 
@@ -483,19 +577,63 @@ def _check_others(name, toks, cwd):
     return None
 
 
-def _check_find(toks, cwd, depth):
+FIND_GLOBAL_OPTS = frozenset(["-H", "-L", "-P", "-E", "-s", "-x", "-d", "-f"])
+
+
+def _find_exec_tail(toks):
+    """The command tokens of the first `-exec`/`-execdir`, up to its
+    terminator."""
     for i, tok in enumerate(toks):
-        if tok == "-delete":
-            return ("deny", "find-delete")
         if tok in ("-exec", "-execdir"):
             rest = []
             for t in toks[i + 1:]:
                 if t in (";", "+", "\\;"):
                     break
                 rest.append(t)
-            if _has_recursive_rm(" ".join(rest), depth + 1):
-                return ("deny", "recursive-rm-in-find-exec")
-    return None
+            return rest
+    return []
+
+
+def _find_scope(toks, cwd):
+    """Where does this `find` START walking? `ask` when every start path
+    is a literal inside the allowed roots, `deny` otherwise — a walk that
+    begins at `/`, at a protected directory or at a variable deletes an
+    unknown set, and that is not something to confirm, it is something to
+    refuse."""
+    paths, i = [], 1
+    while i < len(toks) and toks[i] in FIND_GLOBAL_OPTS:
+        i += 1
+    while i < len(toks):
+        tok = toks[i]
+        if tok.startswith("-") or tok in ("(", ")", "!", ","):
+            break
+        paths.append(tok)
+        i += 1
+    if not paths:
+        paths = ["."]  # GNU find defaults to the working directory
+    cwd_norm = posixpath.normpath((cwd or "").replace("\\", "/"))
+    for op in paths:
+        if "$" in op or "`" in op or op == "":
+            return "deny"
+        if any(c in op for c in GLOB_CHARS):
+            op = _glob_parent(op) or "."
+        target = _abspath(op, cwd)
+        if _is_protected(target):
+            return "deny"
+        if not (_inside_allowed(target, cwd) or target == cwd_norm):
+            return "deny"
+    return "ask"
+
+
+def _check_find(toks, cwd, depth):
+    deletes = "-delete" in toks
+    kind = "find-delete" if deletes else None
+    if not deletes and _has_recursive_rm(" ".join(_find_exec_tail(toks)),
+                                         depth + 1):
+        kind = "recursive-rm-in-find-exec"
+    if kind is None:
+        return None
+    return (_find_scope(toks, cwd), kind)
 
 
 def _check_remote(toks, cwd, depth):
@@ -512,17 +650,27 @@ def _check_remote(toks, cwd, depth):
     return None
 
 
-def _check_segment(seg, cwd, depth):
+def _check_segment(seg, cwd, depth, cwd_unknown=False):
     if REDIRECT_VAR_RE.search(seg):
         return ("deny", "truncating-redirect-to-variable")
+    body = _func_body(seg)
+    if body is not None:
+        return _check_command(body, cwd, depth + 1, cwd_unknown)
     toks = _strip_assignments(_tokens(seg))
     if not toks:
         return None
     toks, bypass = _strip_wrappers(toks)
     if not toks:
         return None
+    toks = _strip_multiplexer(toks)
     name = _base(toks[0])
     literal_path = "/" in toks[0] or "\\" in toks[0]
+
+    # `RM=rm; $RM -rf /` — the command word itself is a variable, so what
+    # runs is unknowable here; a recursive flag behind it is enough.
+    if ("$" in toks[0] or "`" in toks[0]) and \
+            any(_is_recursive(t) for t in toks[1:]):
+        return ("deny", "variable-command")
 
     if name in SHELLS:
         for i, tok in enumerate(toks[1:], 1):
@@ -550,20 +698,30 @@ def _check_segment(seg, cwd, depth):
             toks[1] in ("exec", "run"):
         return _check_remote(toks[2:], cwd, depth)
     if name == "rm":
-        return _check_rm(toks, cwd, bypass, literal_path)
+        return _check_rm(toks, cwd, bypass, literal_path, cwd_unknown)
     if name == "git":
         return _check_git(toks, cwd)
     return _check_others(name, toks, cwd)
 
 
-def _check_command(text, cwd, depth=0):
+def _is_cd(seg):
+    toks, _ = _strip_wrappers(_strip_assignments(_tokens(seg)))
+    return bool(toks) and _base(toks[0]) in CD_COMMANDS
+
+
+def _check_command(text, cwd, depth=0, cwd_unknown=False):
     if depth > MAX_DEPTH:
         return None
     worst = None
     for seg in _split_segments(text):
-        worst = _worse(worst, _check_segment(seg, cwd, depth))
+        worst = _worse(worst, _check_segment(seg, cwd, depth, cwd_unknown))
         for sub in _substitutions(seg):
-            worst = _worse(worst, _check_command(sub, cwd, depth + 1))
+            worst = _worse(worst, _check_command(sub, cwd, depth + 1,
+                                                 cwd_unknown))
+        # Everything after a `cd` runs somewhere the payload's `cwd` does
+        # not name — `cd / && rm -rf *` is the whole reason this exists.
+        if not cwd_unknown and _is_cd(seg):
+            cwd_unknown = True
     return worst
 
 
@@ -604,6 +762,21 @@ REASONS = {
         "shim cannot protect another machine",
     "git-clean-variable-operand":
         "`git clean` with a variable/empty operand",
+    "git-clean-exclude":
+        "`git clean` with `-e`/`--exclude` — what survives then depends "
+        "on a pattern matching, and a pattern that matches nothing "
+        "deletes the whole tree",
+    "variable-command":
+        "a recursive delete whose COMMAND WORD is a variable (`$RM -rf …`) "
+        "— what actually runs is unknown here",
+    "recursive-rm-in-unknown-cwd":
+        "a recursive `rm` on `*`, `.` or `..` after a `cd` earlier in the "
+        "same line — the directory it would empty is not the one this "
+        "approval shows",
+    "relative-path-in-unknown-cwd":
+        "a recursive `rm` on a relative path after a `cd` earlier in the "
+        "same line, so the directory it resolves against is not the one "
+        "shown here",
     "mkfs": "a filesystem-creating command (`mkfs*`) — it destroys a volume",
     "shred": "`shred`, which overwrites file contents irrecoverably",
     "dd-to-device": "`dd` writing to a device or a variable target",
@@ -686,7 +859,7 @@ def _guard(data):
 
     # Layer B in front of /bin/rm for this call — only for commands that
     # actually mention `rm`, so allow-rules on other tools keep matching.
-    if RM_WORD_RE.search(command) and not command.startswith(PREFIX):
+    if not command.startswith(PREFIX) and _invokes_rm(command):
         updated = dict(tool_input)
         updated["command"] = PREFIX + command
         out["updatedInput"] = updated

@@ -204,13 +204,18 @@ Bash <command>                                  Layer A — static, before the s
   │  `/`, `/*`, a protected top-level dir, ~ or $HOME ...... DENY
   ├─ recursive rm behind sudo / command -p / env -i /
   │  a literal /bin/rm ..................................... DENY  (shim bypasses)
-  ├─ recursive rm inside bash -c / eval / xargs /
-  │  find -exec, or find … -delete ......................... DENY  (operands invisible)
+  ├─ recursive rm inside bash -c / eval / xargs, a function
+  │  body, busybox rm, behind a $VAR command word .......... DENY  (operands invisible)
+  ├─ recursive rm on * / . / .. after a cd in the line ..... DENY  (not the cwd shown)
   ├─ recursive rm inside ssh / docker exec / kubectl exec .. DENY  (no shim over there)
   ├─ dd of=/dev/…, mkfs*, diskutil erase*, chmod/chown -R on
-  │  a system path, truncate -s 0 $var, shred, > $var ...... DENY
+  │  a system path, truncate -s 0 $var, shred, > $var,
+  │  git clean with a $var or an -e pattern ................ DENY
+  ├─ find … -delete / -exec rm -r starting at a variable, a
+  │  protected dir, or outside the allowed roots ........... DENY
   ├─ recursive rm on a LITERAL path outside cwd, $TMPDIR,
   │  /tmp, ~/.claude, ~/.workflow, ~/Documents/git ......... ASK
+  ├─ find … -delete / -exec rm -r inside those roots ....... ASK
   └─ everything else ....................................... PASS
 
 $ rm -rf "$dir"/*                               Layer B — the shim, after expansion
@@ -221,6 +226,8 @@ $ rm -rf "$dir"/*                               Layer B — the shim, after expa
 ```
 
 Layer B is installed at every session start to `~/.claude/guard/bin/rm` and prepended to `PATH` through `$CLAUDE_ENV_FILE`; commands that mention `rm` additionally get `export PATH="$HOME/.claude/guard/bin:$PATH"; ` prefixed via `updatedInput`, so the shim wins even when the env file is not honoured. Only rm-bearing commands are rewritten, so `Bash(git *)`-style permission rules keep matching. `DESTRUCTIVE_GUARD=0` disables both layers. `SAFE_RM_DRYRUN=1` makes the shim print `ALLOW`/`REFUSE <reason>` and exit without deleting anything — that is how the test suite exercises it, and it is not a bypass: a command that so much as mentions `SAFE_RM_DRYRUN` or `SAFE_RM_BYPASS` is denied by Layer A.
+
+**Not covered by design.** The guard knows two things: shell command *text* (Layer A) and an `rm` *argv* (Layer B). Deletion that goes through neither is out of scope — `python3 -c "shutil.rmtree(…)"`, `perl -e 'unlink …'`, `rsync --delete`, and anything a command *writes* rather than runs (`printf '…' | sh`, a generated script). A literal `> file` truncation is out of scope too: only a *variable* redirect target is refused, because a named file is a path the approval could actually read. Layer B still catches whatever of that reaches `rm` by name; nothing catches the rest, so the echo-only/dry-run rule for probing destructive commands stays a rule, not a fallback.
 
 ### 4 · Cold-cache guard
 
@@ -300,7 +307,7 @@ Requires `python3` on PATH. **Windows** works too: the ledger guards, the Sessio
 
 ### Manual install (without the plugin system)
 
-1. Copy `scripts/ledger_guard_spawn.py`, `scripts/ledger_guard_stop.py`, and `scripts/cleanup_session_cache.py` to `~/.claude/hooks/` For the destructive-command guard, also copy `scripts/destructive_guard.py` (PreToolUse, matcher `^Bash$`) and `scripts/destructive_guard_install.py` (SessionStart) there, and copy `guard/rm` to `~/.claude/guard/bin/rm` (`chmod 755`) — or let the SessionStart hook place it for you.
+1. Copy `scripts/ledger_guard_spawn.py`, `scripts/ledger_guard_stop.py`, and `scripts/cleanup_session_cache.py` to `~/.claude/hooks/`. For the destructive-command guard, also copy `scripts/destructive_guard.py` (PreToolUse, matcher `^Bash$`) and `scripts/destructive_guard_install.py` (SessionStart) there, and copy `guard/rm` to `~/.claude/guard/bin/rm` (`chmod 755`) — or let the SessionStart hook place it for you.
 2. Merge this into `~/.claude/settings.json`:
 
 ```json
