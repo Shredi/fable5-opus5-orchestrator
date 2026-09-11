@@ -22,6 +22,9 @@
 #     ~/.workflow, ~/Documents/git
 # Non-recursive deletes of single files outside those roots pass: small
 # blast radius, and `sudo rm` never reaches here (Layer A denies it).
+# Deleting a SYMLINK by name (no trailing slash) is judged by where the
+# link itself lives — `rm -rf link` unlinks the link even when it points
+# at `/`; `rm -rf link/` walks into the target and is judged as that.
 #
 # SAFE_RM_DRYRUN=1 prints `ALLOW` or `REFUSE <reason>`, exits 0 and
 # never execs — this is how the test suite exercises the shim without
@@ -61,13 +64,16 @@ refuse() {
 # Canonical absolute path, without requiring the target to exist: an
 # existing directory resolves itself, anything else resolves its parent
 # and keeps the basename.
+# `canon <path> nofollow` stops at a symlink: `rm -rf link` (no trailing
+# slash) removes the LINK, not what it points at, so the path that must
+# clear the protected/allowed-root checks is the link's own.
 canon() (
     p=$1
     case $p in
         /*) ;;
         *) p=$CWD/$p ;;
     esac
-    if [ -d "$p" ]; then
+    if [ "${2-}" != nofollow ] && [ -d "$p" ]; then
         cd -P "$p" 2>/dev/null && pwd -P && exit 0
         printf '%s\n' "$p"
         exit 0
@@ -110,6 +116,15 @@ inside_allowed() {
         case $ia_root in /*) ;; *) continue ;; esac
         if is_protected "$ia_root"; then continue; fi
         case $ia_p in "$ia_root"/*) return 0 ;; esac
+        # Operands are canonicalised, so the roots must be too, or a root
+        # reached through a symlink never matches its own contents: on
+        # macOS $TMPDIR is /var/folders/… and /var is a link to /private/var,
+        # so every operand under it canonicalises to /private/var/folders/….
+        [ -d "$ia_root" ] || continue
+        ia_can=$(canon "$ia_root")
+        [ "$ia_can" = "$ia_root" ] && continue
+        if is_protected "$ia_can"; then continue; fi
+        case $ia_p in "$ia_can"/*) return 0 ;; esac
     done
     return 1
 }
@@ -177,7 +192,14 @@ for arg in "$@"; do
     if [ -z "$arg" ]; then
         refuse "empty operand" "''"
     fi
-    target=$(canon "$arg")
+    # A symlink named without a trailing slash: rm unlinks the link, so
+    # judge the link's own location, not the tree it points into.
+    nofollow=
+    case $arg in
+        */) ;;
+        *) [ -L "$arg" ] && nofollow=nofollow ;;
+    esac
+    target=$(canon "$arg" $nofollow)
     if is_protected "$target"; then
         refuse "protected path" "$target"
     fi

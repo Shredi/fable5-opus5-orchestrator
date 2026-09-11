@@ -110,12 +110,43 @@ def test_denies_shim_bypasses(command):
     "zsh -c 'rm -r build'",
     'eval "rm -rf $DIR"',
     "ls | xargs rm -rf",
-    'find . -name "*.tmp" -exec rm -rf {} \\;',
-    "find /tmp/old -delete",
+    "find / -delete",
+    "find /etc -exec rm -rf {} +",
     "echo $(rm -rf /)",
 ])
 def test_denies_nested_destructive_contexts(command):
     assert decide(command)[0] == "deny"
+
+
+def test_denies_a_recursive_rm_inside_a_function_body():
+    # `f(){ rm -rf $1; }; f ""` is the incident's shape wrapped in a
+    # definition: the segment's first token is `f(){`, so without reading
+    # the body the rm is never seen at all.
+    assert decide('f(){ rm -rf $1; }; f ""')[0] == "deny"
+    assert decide("cleanup(){ rm -rf build; }; cleanup")[0] == "allow"
+
+
+@pytest.mark.parametrize("command", ["busybox rm -rf /", "toybox rm -rf $x"])
+def test_denies_rm_behind_an_applet_multiplexer(command):
+    assert decide(command)[0] == "deny"
+
+
+def test_denies_a_recursive_delete_behind_a_variable_command_word():
+    assert decide("RM=rm; $RM -rf /")[0] == "deny"
+
+
+def test_a_cd_earlier_in_the_line_makes_relative_operands_unknown():
+    # The payload's cwd stops describing where the rm lands.
+    assert decide("cd / && rm -rf *")[0] == "deny"
+    assert decide("cd ~ && rm -rf .")[0] == "deny"
+    assert decide("cd /elsewhere && rm -rf sub")[0] == "ask"
+    # ...while a bare `*` in a cwd nobody moved out of stays allowed.
+    assert decide("rm -rf *")[0] == "allow"
+
+
+def test_denies_git_clean_with_an_exclude_pattern():
+    assert decide("git clean -fdx -e keep")[0] == "deny"
+    assert decide("git clean -fdx --exclude=keep")[0] == "deny"
 
 
 # --- DENY: remote command strings (ledger item 11) --------------------------
@@ -155,6 +186,12 @@ def test_denies_other_destructive_families(command):
     assert decide(command)[0] == "deny"
 
 
+def test_an_append_redirect_to_a_variable_is_not_a_truncation():
+    # `>>` adds; only a single `>` (or `:>`) empties the file.
+    assert decide("echo x >> $LOG")[0] == "allow"
+    assert decide("echo x > $LOG")[0] == "deny"
+
+
 def test_denies_in_band_bypass_attempts():
     # The shim's dry-run switch belongs to the test suite; a command that
     # tries to set it (or a made-up SAFE_RM_BYPASS) is refused outright.
@@ -163,6 +200,16 @@ def test_denies_in_band_bypass_attempts():
 
 
 # --- ASK: recursive rm on a literal path outside the allowed roots ----------
+
+def test_find_delete_inside_the_allowed_roots_asks_instead_of_denying():
+    # An everyday cleanup inside .workflow is a confirm, not a refusal;
+    # a walk that starts at a variable or a protected dir stays a refusal.
+    assert decide("find .workflow/scratch -name '*.tmp' -delete")[0] == "ask"
+    assert decide("find /tmp/old -delete")[0] == "ask"
+    assert decide('find . -name "*.tmp" -exec rm -rf {} \\;')[0] == "ask"
+    assert decide("find $DIR -delete")[0] == "deny"
+    assert decide("find /Users -delete")[0] == "deny"
+
 
 def test_asks_for_recursive_rm_outside_allowed_roots():
     decision, out = decide("rm -rf /Users/tester/Desktop/old-stuff")
@@ -212,6 +259,22 @@ def test_non_rm_commands_are_left_alone():
     # Rewriting everything would break `Bash(git *)`-style allow rules.
     assert decide("git status") == ("allow", None)
     assert decide("ls -la") == ("allow", None)
+
+
+@pytest.mark.parametrize("command", [
+    "git commit -m 'rm -rf cleanup'",   # `rm` inside a commit message
+    'grep -r "rm -rf" docs/',           # ...inside a search pattern
+    "docker rm c",                      # ...as another tool's subcommand
+    "echo 'rm -rf /'",                  # ...as text
+])
+def test_the_word_rm_in_an_argument_is_not_an_rm_call(command):
+    # The prefix comes off the PARSED tokens, not off the raw string.
+    assert decide(command) == ("allow", None)
+
+
+@pytest.mark.parametrize("command", ["rm foo.txt", "find . -exec rm {} +"])
+def test_real_rm_calls_still_get_the_prefix(command):
+    assert decide(command)[1]["updatedInput"]["command"] == PREFIX + command
 
 
 def test_rewrite_is_idempotent():

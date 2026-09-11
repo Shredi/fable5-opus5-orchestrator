@@ -30,15 +30,17 @@ def sandbox(tmp_path):
     return home, work
 
 
-def dry_run(sandbox, *args):
+def dry_run(sandbox, *args, **kwargs):
     home, work = sandbox
+    tmpdir = kwargs.pop("tmpdir", None) or home / "tmp"
+    assert not kwargs, kwargs
     proc = subprocess.run(
         ["/bin/sh", str(SHIM)] + list(args),
         cwd=str(work),
         capture_output=True,
         text=True,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin",
-             "SAFE_RM_DRYRUN": "1", "TMPDIR": str(home / "tmp")},
+             "SAFE_RM_DRYRUN": "1", "TMPDIR": str(tmpdir)},
         timeout=30,
     )
     assert proc.returncode == 0, proc.stderr  # dry-run never execs, never fails
@@ -65,9 +67,30 @@ def test_refuses_home_itself(sandbox):
 
 
 def test_refuses_a_recursive_delete_outside_the_allowed_roots(sandbox):
-    home, _ = sandbox
-    outside = home / "Desktop" / "old"
-    assert dry_run(sandbox, "-rf", str(outside)).startswith("REFUSE")
+    # NOT a path under the fake HOME: pytest's tmp_path lives in the real
+    # temp tree, which IS an allowed root once the roots are canonicalised.
+    assert dry_run(sandbox, "-rf", "/Users/someone/Desktop/old") \
+        .startswith("REFUSE")
+
+
+def test_tmpdir_reached_through_a_symlink_is_an_allowed_root(tmp_path, sandbox):
+    """macOS hands out `$TMPDIR=/var/folders/…` while `/var` is a symlink
+    to `/private/var`, so an operand under it canonicalises into a path
+    the un-canonicalised root never matched."""
+    real = tmp_path / "real-tmp"
+    (real / "build").mkdir(parents=True)
+    link = tmp_path / "link-tmp"
+    link.symlink_to(real)
+    assert dry_run(sandbox, "-rf", str(link / "build"), tmpdir=link) == "ALLOW"
+
+
+def test_deleting_a_symlink_itself_is_allowed(sandbox):
+    """`rm -rf link` unlinks the LINK; only `rm -rf link/` walks into the
+    protected tree behind it."""
+    _, work = sandbox
+    (work / "rootlink").symlink_to("/")
+    assert dry_run(sandbox, "-rf", "rootlink") == "ALLOW"
+    assert dry_run(sandbox, "-rf", "rootlink/").startswith("REFUSE")
 
 
 def test_allows_a_file_inside_the_working_directory(sandbox):
