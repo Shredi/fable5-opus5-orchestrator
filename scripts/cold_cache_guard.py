@@ -413,7 +413,7 @@ def block_reason(tokens, gap_seconds, ack_min, ledger):
         f"context and was idle {fmt_gap(gap_seconds)}; the 1-hour prompt "
         f"cache is cold, so this message would re-write the whole context "
         f"(~${usd:.2f} list, ~{fmt_tokens(equiv)} output-token equivalents "
-        f"of Fable limit).\n"
+        f"of the chair's usage limit).\n"
         f"/clear and start fresh (live ledger: {where}) - the ledger on disk "
         f"carries the state, and /compact would re-write the context too.\n"
         f"Or send any prompt again within {ack_min:g} min to proceed anyway."
