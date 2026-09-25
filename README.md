@@ -6,7 +6,7 @@
 
 Fable 5 is the best chair a Claude Code session can have — and the most expensive seat in the house. Let it type every token itself and the session ends rate-limited, waiting out the reset window.
 
-This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends tokens only on planning, arbitration, and final decisions. The volume — implementation, research, briefs, review, bulk reading — goes to **Sonnet 5**; the predictably hard slices — architecture, irreversible migrations, security review — go **directly to Opus 5**, which doubles as the escalation lane. **Every close gets fresh-eyes verification** from **Opus 5 or Fable 5**, one bounded call per workflow, before the chair moves on. Prefer **Opus in the chair**? The OPUS-PRIMARY profile runs the same discipline with Opus orchestrating and Fable kept as a capped planner and high-stakes verifier.
+This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends tokens only on planning, arbitration, and final decisions. The volume — implementation, research, briefs, review, bulk reading — goes to **Sonnet 5**; the predictably hard slices — architecture, irreversible migrations, security review — go **directly to Opus 5.5**, which doubles as the escalation lane. **Every close gets fresh-eyes verification** from **Opus 5.5 or Fable 5**, one bounded call per workflow, before the chair moves on. Prefer **Opus in the chair**? The OPUS-PRIMARY profile runs the same discipline with Opus orchestrating and Fable kept as a capped planner and high-stakes verifier.
 
 ## The division of labor
 
@@ -22,7 +22,7 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
            ┌────────────────────────┬────┴───────────────────┬────────────────────────┐
            ▼                        ▼                        ▼                        ▼
 ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
-│      SONNET 5       │  │      SONNET 5       │  │      SONNET 5       │  │       OPUS 5        │
+│      SONNET 5       │  │      SONNET 5       │  │      SONNET 5       │  │      OPUS 5.5       │
 │   mechanical bulk   │  │   implementation    │  │   routine judgment  │  │  hard work · direct │
 │   grep·fetch·scan   │  │   code · tests      │  │   briefs · review   │  │  architecture       │
 │   format · read     │  │   debug · refactor  │  │   filtering         │  │  migrations·security│
@@ -31,34 +31,34 @@ This plugin makes the split mechanical. **Fable 5 keeps the chair** and spends t
                                                              │ high stakes            │ opus
                                                           ┌──▼────────────────────────▼──┐
                                                           │   the verification valve     │
-                                                          │  verify: OPUS 5 / FABLE 5    │
-                                                          │  escalate: OPUS 5 → FABLE 5  │
+                                                          │ verify: OPUS 5.5 / FABLE 5   │
+                                                          │ escalate: OPUS 5.5 → FABLE 5 │
                                                           └──────────────────────────────┘
 ```
 
 Fable thinks. Sonnet carries the volume, Opus takes the hard slices. Opus or Fable checks the close. Your limit pays for the thinking plus at most one verification per close:
 
 ```
-┌─────────────────────────────────────────┬─────────────────┬─────────────────────┐
-│ Work                                    │ Runs on         │ Fable limit pays    │
-├─────────────────────────────────────────┼─────────────────┼─────────────────────┤
-│ Phase planning, arbitration, decisions  │ Fable 5 (chair) │ yes                 │
-│ Implementation, tests, refactors        │ Sonnet 5        │ nothing             │
-│ Source briefs, filtering, code review   │ Sonnet 5        │ nothing             │
-│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5        │ nothing             │
-│ Hard slices: architecture, migrations   │ Opus 5 (direct) │ nothing             │
-│ Security / adversarial review           │ Opus 5          │ nothing             │
-│ Escalations (sonnet "uncertain")        │ Opus → Fable    │ mostly nothing      │
-│ Fresh-eyes verification — EVERY close   │ Opus/Fable 5    │ at most 1 per close │
-└─────────────────────────────────────────┴─────────────────┴─────────────────────┘
+┌─────────────────────────────────────────┬───────────────────┬─────────────────────┐
+│ Work                                    │ Runs on           │ Fable limit pays    │
+├─────────────────────────────────────────┼───────────────────┼─────────────────────┤
+│ Phase planning, arbitration, decisions  │ Fable 5 (chair)   │ yes                 │
+│ Implementation, tests, refactors        │ Sonnet 5          │ nothing             │
+│ Source briefs, filtering, code review   │ Sonnet 5          │ nothing             │
+│ Bulk gathering (fetch, grep, scan)      │ Sonnet 5          │ nothing             │
+│ Hard slices: architecture, migrations   │ Opus 5.5 (direct) │ nothing             │
+│ Security / adversarial review           │ Opus 5.5          │ nothing             │
+│ Escalations (sonnet "uncertain")        │ Opus → Fable      │ mostly nothing      │
+│ Fresh-eyes verification — EVERY close   │ Opus/Fable 5      │ at most 1 per close │
+└─────────────────────────────────────────┴───────────────────┴─────────────────────┘
 ```
 
-## Why Fable 5 × Sonnet 5 × Opus 5 is the right trio
+## Why Fable 5 × Sonnet 5 × Opus 5.5 is the right trio
 
 - **Fable tokens are the heaviest draw on your limit.** Every token of bulk work kept off the chair extends how long Fable stays in it.
 - **Sonnet 5 carries the volume.** Near-Opus quality on coding and agentic work — the chair routes it every mechanical sweep, implementation, and routine-judgment task.
-- **Opus 5 takes the hard slices directly.** Architecture tradeoffs, irreversible migrations, complex multi-system implementation, and all security/adversarial review are assigned straight to Opus — no failed Sonnet pass required — and Opus doubles as the escalation lane.
-- **The valve is two-tier, and it never opens by itself.** Fresh-eyes verification is mandatory on **every** close. It runs on Opus 5 or Fable 5 — Opus spares the Fable limit; the largest, highest-stakes closes still get Fable, the strongest model at the single moment it matters most. Anthropic measured this worker+verifier split: Sonnet 5 with a Fable 5 advisor checking its work lands within 10% of Fable 5's score on the whole task. Escalations climb sonnet → opus → fable, with security reviews kept off Fable, whose classifiers decline benign security work most readily. Any tier can still decline it — the profile's rule is to first remove the documented false-positive causes (base64 in the worker's tool output, "does this compile" phrasing, a lesser-known language with no docs) and retry the SAME tier, which fixes the input rather than the wording; failing that, rerun the refused task unchanged on another tier and, if that tier declines too, stop and tell you, never to reword the request past a classifier. A worker that returns "uncertain" never bounces back to the chair.
+- **Opus 5.5 takes the hard slices directly.** Architecture tradeoffs, irreversible migrations, complex multi-system implementation, and all security/adversarial review are assigned straight to Opus — no failed Sonnet pass required — and Opus doubles as the escalation lane.
+- **The valve is two-tier, and it never opens by itself.** Fresh-eyes verification is mandatory on **every** close. It runs on Opus 5.5 or Fable 5 — Opus spares the Fable limit; the largest, highest-stakes closes still get Fable, the strongest model at the single moment it matters most. Anthropic measured this worker+verifier split: Sonnet 5 with a Fable 5 advisor checking its work lands within 10% of Fable 5's score on the whole task. Escalations climb sonnet → opus → fable, with security reviews kept off Fable, whose classifiers decline benign security work most readily. Any tier can still decline it — the profile's rule is to first remove the documented false-positive causes (base64 in the worker's tool output, "does this compile" phrasing, a lesser-known language with no docs) and retry the SAME tier, which fixes the input rather than the wording; failing that, rerun the refused task unchanged on another tier and, if that tier declines too, stop and tell you, never to reword the request past a classifier. A worker that returns "uncertain" never bounces back to the chair.
 - **Effort is not a per-spawn lever.** The Agent tool has no effort parameter — a spec that says "work at medium effort" is ignored, and every worker and verifier runs at the chair's own effort level. The only real per-spawn choice is the MODEL (sonnet/opus/fable via the `model` parameter), which is what this whole routing story is actually about.
 
 ## What the plugin does
