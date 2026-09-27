@@ -1,6 +1,8 @@
 # Fable Orchestrator
 
-[![CI](https://github.com/Rylaa/fable5-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/Rylaa/fable5-orchestrator/actions/workflows/ci.yml)
+[![CI](https://github.com/Shredi/fable5-opus5-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/Shredi/fable5-opus5-orchestrator/actions/workflows/ci.yml)
+
+> Fork of [Rylaa/fable5-orchestrator](https://github.com/Rylaa/fable5-orchestrator). See [UPSTREAM.md](UPSTREAM.md) for what was taken from upstream and what was skipped, and why.
 
 **Run Claude Fable 5 all day — without watching the usage meter.**
 
@@ -307,7 +309,7 @@ Watch, don't type: a teammate's pane is its working terminal, and stray input in
 ## Install
 
 ```
-/plugin marketplace add Rylaa/fable5-orchestrator
+/plugin marketplace add Shredi/fable5-opus5-orchestrator
 /plugin install orchestrator@fable-orchestrator
 ```
 
