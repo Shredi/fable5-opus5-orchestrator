@@ -144,6 +144,31 @@ def test_bash_reads_are_classified(tmp_path):
     assert _count(tmp_path) == 5
 
 
+def test_bash_writes_are_ignored_not_counted(tmp_path):
+    # cat with a stdout redirect or heredoc is a WRITE; curl with a
+    # non-GET method and find with -delete/-exec are not reads either.
+    _chair(tmp_path)
+    for cmd in ("cat > f <<EOF\nx\nEOF", "cat <<EOF > f\nx\nEOF",
+                "cat > .workflow/scratch/x.md <<EOF\nx\nEOF", "cat a >> b",
+                "curl -X POST https://example.com", "curl -XDELETE https://e.x",
+                "curl --request PUT https://e.x", "find . -name '*.pyc' -delete",
+                "find . -exec rm {} +"):
+        assert _run(tmp_path, _bash(cmd)) is None, cmd
+    assert _count(tmp_path) == 0
+    for cmd in ("grep x big.py 2>/dev/null", "curl -X GET https://e.x",
+                "cat big.py | head"):
+        _run(tmp_path, _bash(cmd))
+    assert _count(tmp_path) == 3
+
+
+def test_dotdot_out_of_an_allowlisted_segment_is_not_exempt(tmp_path):
+    _chair(tmp_path)
+    big = _big(tmp_path)
+    sneaky = tmp_path / "skills" / "playbook" / ".." / ".." / big.name
+    _run(tmp_path, _read(sneaky))
+    assert _count(tmp_path) == 1
+
+
 def test_warn_exactly_at_warn_then_deny_from_deny(tmp_path):
     _chair(tmp_path)
     big = _big(tmp_path)

@@ -64,6 +64,7 @@ BASH_READ_RE = re.compile(
     r"^(cat|rg|grep|egrep|sed\s+-n|head|tail|find|curl|wget|less)\b")
 ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SHELL_OPS = ("|", "||", "&", "&&", ";", ";;", ">", ">>", "<", "<<", "(", ")")
+PIPELINE_OPS = ("|", "||", "&", "&&", ";", ";;", "(", ")")
 
 
 def _metric(event, session_id=None, **extra):
@@ -258,10 +259,13 @@ def allowlisted(path, cwd):
     root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if root and real.startswith(_norm(os.path.realpath(root)) + "/skills/"):
         return "skills"
-    if "/skills/playbook/" in real or "/skills/playbook/" in _norm(p):
+    # normpath, never the raw string: `/x/skills/playbook/../../etc/f`
+    # must not ride on the allowlisted segment it climbs out of.
+    lexical = _norm(os.path.normpath(p))
+    if "/skills/playbook/" in real or "/skills/playbook/" in lexical:
         return "skills"
     if os.path.basename(real).lower() in ("memory.md", "claude.md") or \
-            os.path.basename(_norm(p)).lower() in ("memory.md", "claude.md"):
+            os.path.basename(lexical).lower() in ("memory.md", "claude.md"):
         return "memory"
     return None
 
@@ -279,7 +283,7 @@ def _limit(tool_input):
 def _bash_tokens(command):
     """The first simple command's tokens, after leading VAR=x
     assignments and `cd ... &&` prefixes are stripped; [] when there is
-    none."""
+    none, or when that command writes (see _writes)."""
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -296,11 +300,41 @@ def _bash_tokens(command):
         else:
             break
     simple = []
+    prev = ""
     for tok in tokens:
-        if tok in SHELL_OPS:
+        if tok in PIPELINE_OPS:
             break
-        simple.append(tok)
+        # A stdout redirect (`>`, `>>`, `&>`, `>|`; not `2>`) or a heredoc
+        # / herestring makes `cat > f <<EOF` a WRITE, not a read.
+        if tok and set(tok) <= set("<>&|"):
+            if tok.startswith("<<") or (">" in tok and prev != "2"):
+                return []
+        elif tok not in SHELL_OPS:
+            simple.append(tok)
+        prev = tok
+    if simple and _writes(simple):
+        return []
     return simple
+
+
+def _writes(tokens):
+    """curl with a non-GET method, find with an action that changes or
+    runs things: not reads."""
+    if tokens[0] == "curl":
+        for i, tok in enumerate(tokens):
+            method = None
+            if tok in ("-X", "--request") and i + 1 < len(tokens):
+                method = tokens[i + 1]
+            elif tok.startswith("-X") and len(tok) > 2:
+                method = tok[2:]
+            elif tok.startswith("--request="):
+                method = tok.split("=", 1)[1]
+            if method is not None and method.upper() not in ("GET", "HEAD"):
+                return True
+    if tokens[0] == "find":
+        return any(t in ("-delete", "-exec", "-execdir", "-ok", "-okdir")
+                   for t in tokens)
+    return False
 
 
 def _path_like(tok):
