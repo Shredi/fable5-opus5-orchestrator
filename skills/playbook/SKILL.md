@@ -119,8 +119,8 @@ STOPS the work: tell the user. Security review stays on opus.
 
 Consume briefs + verbatim snippets; bulk stays on disk. Exact content
 a decision hinges on comes back as a verbatim snippet in a scout
-brief; read it yourself only if it is ≤ 60 lines (the read guard
-exempts that). A top chair is long-lived: compact or clear between
+brief; under the fable profile (read guard active) read it yourself
+only if it is ≤ 60 lines (the guard exempts that). A top chair is long-lived: compact or clear between
 tasks, never mid-phase; ledger and scratch survive. Drop closed-phase
 raw material. Your closing
 recap walks the WHOLE ledger, item by item.
