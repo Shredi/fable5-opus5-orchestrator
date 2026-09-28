@@ -12,9 +12,9 @@ session start and the matching profile injected:
     FABLE_ORCH_PROFILE=opus  -> dynamic-workflow-opus.md
     anything else            -> dynamic-workflow-fable.md  (fable / unknown)
 
-OPUS-PRIMARY is the default for an Opus chair: opus orchestrates and is
-the everyday ceiling, the fable tier stays available as a capped
-specialist (planner for hard plans, verifier for high-stakes closes).
+OPUS-PRIMARY is the default for an Opus chair: opus orchestrates and
+plans, the fable tier is the REVIEWER — it reviews plans and verifies
+every close, never plans or builds.
 OPUS is the Fable-limit fallback — same discipline, the fable tier
 rests entirely. Since the model string cannot tell "Opus by choice"
 from "Opus because the Fable limit is spent", the fallback is reached
