@@ -49,18 +49,35 @@ def test_cores_stay_on_the_token_diet():
     # effort-not-selectable sentence, decline check) fit inside it:
     # each states the RULE in one line and points at the playbook section
     # holding the detail, the same trade the v0.15.0 diet made.
+    # opus-primary's budget was raised +300 on 2026-09-28 for the
+    # fable-reviewer change (plan review rule + reviewer-tier rewrite).
+    budgets = {
+        "dynamic-workflow-fable.md": 4000,
+        "dynamic-workflow-opus.md": 4000,
+        "dynamic-workflow-opus-primary.md": 4300,
+    }
     for name in CORES:
         text = _instr(name)
-        assert len(text) < 4000, f"{name} is {len(text)} chars — over the 4k core diet"
+        budget = budgets[name]
+        assert len(text) < budget, \
+            f"{name} is {len(text)} chars — over the {budget}-char core diet"
 
 
 def test_switch_notes_stay_tiny():
     # A switch note is pure delta on top of a core the session already
     # has. Anything approaching core size means the delta grew back into
-    # a second profile and the saving is gone.
+    # a second profile and the saving is gone. profile-switch-to-opus-
+    # primary's budget was raised +150 on 2026-09-28 (fable-reviewer delta).
+    budgets = {
+        "profile-switch-to-fable.md": 600,
+        "profile-switch-to-opus.md": 600,
+        "profile-switch-to-opus-primary.md": 750,
+    }
     for name in SWITCHES:
         text = _instr(name)
-        assert len(text) < 600, f"{name} is {len(text)} chars — over the 600-char delta budget"
+        budget = budgets[name]
+        assert len(text) < budget, \
+            f"{name} is {len(text)} chars — over the {budget}-char delta budget"
 
 
 def test_playbook_skill_exists_and_stays_bounded():
@@ -70,9 +87,9 @@ def test_playbook_skill_exists_and_stays_bounded():
     path = REPO.joinpath(*PLAYBOOK)
     assert path.is_file(), f"missing playbook skill: {path}"
     text = path.read_text(encoding="utf-8")
-    # 5.25k since the destructive-command SAFETY sentence landed in the
-    # verification paragraph; still a budget, not a dumping ground.
-    assert len(text) < 5250, f"SKILL.md is {len(text)} chars — over budget"
+    # 5.5k since the Plan review paragraph landed (2026-09-28,
+    # fable-reviewer change); still a budget, not a dumping ground.
+    assert len(text) < 5500, f"SKILL.md is {len(text)} chars — over budget"
     assert "name: playbook" in text  # the namespaced literal below depends on it
     # The paste-ready blocks sit beside SKILL.md and are read only when a
     # spawn needs them — but without a budget of their own the 5k pin
@@ -244,19 +261,29 @@ def test_playbook_carries_the_worker_spec_and_long_output_blocks():
     assert "Usually it is not needed to draft an output multiple times." in text
 
 
-def test_opus_primary_core_caps_fable_to_planner_and_verifier():
-    # The owner's decision (2026-09-22): Opus is the everyday chair and fable a
-    # deliberate, capped specialist — hard plans and high-stakes closes —
-    # instead of resting entirely. The limit-spent fallback keeps its ban.
+def test_opus_primary_core_fable_is_reviewer_not_planner():
+    # The owner's decision (2026-09-27/28): Fable's planner role and the ≤2
+    # spawn cap are removed from opus-primary — Opus plans hard plans
+    # itself. Fable becomes the REVIEWER tier: it reviews plans (when a
+    # ledger exists) and verifies EVERY close, never builds or plans.
+    # The limit-spent fallback (same verifier, model: "opus" override)
+    # keeps its ban on Fable never being asked to build or plan.
     prim = _flat(_instr("dynamic-workflow-opus-primary.md"))
     assert "(OPUS-PRIMARY profile)" in prim
     assert "(OPUS profile)" not in prim     # the fallback tag must not match
     assert "Do NOT spawn fable" not in prim
-    assert "≤2 spawns/task without the user's OK" in prim
-    assert "PLANNER for hard, irreversible or multi-system plans" in prim
-    assert "fable verifies HIGH-STAKES closes" in prim
-    assert "opus takes the role; ledger note, no restart" in prim
-    assert "security always" in prim
+    # planner clause absent
+    assert "≤2 spawns/task without the user's OK" not in prim
+    assert "PLANNER for hard, irreversible or multi-system plans" not in prim
+    assert "fable verifies HIGH-STAKES closes" not in prim
+    # reviewer tier + plan-review clause present
+    assert "fable is the REVIEWER tier" in prim
+    assert "never builds or plans" in prim
+    assert "no spawn cap on review spawns" in prim
+    assert "VERDICT: PASS|FAIL (n blockers)" in prim
+    assert "CAP 2 plan-review cycles" in prim
+    assert "EVERY close gets a FRESH fable verifier" in prim
+    assert 'model: "opus"` override; ledger note, no restart' in prim
     fallback = _flat(_instr("dynamic-workflow-opus.md"))
     assert "Do NOT spawn fable agents" in fallback
     assert "EVERY close gets a FRESH opus verifier" in fallback
@@ -290,8 +317,8 @@ def test_non_opus_models_get_the_fable_profile(tmp_path):
 
 
 def test_opus_chair_gets_the_opus_primary_profile(tmp_path):
-    # A detected Opus chair is Opus BY CHOICE: fable stays available as a
-    # capped specialist. The limit fallback is pin-only (below).
+    # A detected Opus chair is Opus BY CHOICE: fable is the reviewer
+    # tier, never a planner. The limit fallback is pin-only (below).
     result = run_hook(
         INJECT,
         {"model": "claude-opus-5", "session_id": "s-opus"},
@@ -479,7 +506,7 @@ def test_fable_to_opus_primary_switch_on_resume_injects_only_the_delta(tmp_path)
                                          "source": "resume"}))
     assert "Profile switch → OPUS-PRIMARY chair" in text
     assert "(OPUS-PRIMARY profile)" not in text   # the full core is NOT re-sent
-    assert len(text) < 600
+    assert len(text) < 750  # opus-primary switch delta budget (2026-09-28)
     assert _marker(tmp_path, "s-sw1")["profile"] == "opus-primary"
 
 
