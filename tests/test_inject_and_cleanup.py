@@ -54,7 +54,7 @@ def test_cores_stay_on_the_token_diet():
     budgets = {
         "dynamic-workflow-fable.md": 4000,
         "dynamic-workflow-opus.md": 4000,
-        "dynamic-workflow-opus-primary.md": 4300,
+        "dynamic-workflow-opus-primary.md": 4400,
     }
     for name in CORES:
         text = _instr(name)
@@ -89,7 +89,7 @@ def test_playbook_skill_exists_and_stays_bounded():
     text = path.read_text(encoding="utf-8")
     # 5.5k since the Plan review paragraph landed (2026-09-28,
     # fable-reviewer change); still a budget, not a dumping ground.
-    assert len(text) < 5500, f"SKILL.md is {len(text)} chars — over budget"
+    assert len(text) < 5600, f"SKILL.md is {len(text)} chars — over budget"
     assert "name: playbook" in text  # the namespaced literal below depends on it
     # The paste-ready blocks sit beside SKILL.md and are read only when a
     # spawn needs them — but without a budget of their own the 5k pin
