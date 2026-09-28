@@ -76,7 +76,7 @@ or shown open. CAP 2 plan-review cycles; never rewrites it.
 EVERY close gets a FRESH fable verifier; only it closes `V.`.
 Security review as WORK stays opus; verifying it is fable too.
 Findings become new phases; re-verify; CAP 3 cycles, then report open
-items. `advisorModel: fable`: call it before committing, when stuck,
+items. `advisorModel: fable`: call it before choosing an approach, when stuck,
 and before declaring done — in-session, the verifier is the gate.
 
 ## Hygiene
