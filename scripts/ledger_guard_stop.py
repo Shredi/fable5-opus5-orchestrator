@@ -612,7 +612,8 @@ def touch_session_files(session_id):
     tasks sidecars, resetting the task counter and re-blocking a ledger
     that had already had its one reminder.
     """
-    for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks"):
+    for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks",
+                   "fable-orch-reads"):
         path = _tmp_json(prefix, session_id)
         if path and os.path.isfile(path):
             try:
