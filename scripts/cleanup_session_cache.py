@@ -43,8 +43,9 @@ def _rotate_metrics():
     """Cap the metrics log: past ~5MB the current file becomes .old
     (replacing the previous .old), so the pair never exceeds ~10MB."""
     try:
-        path = os.path.join(os.path.expanduser("~"), ".claude",
-                            "fable-orch", "metrics.jsonl")
+        d = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+            os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        path = os.path.join(d, "metrics.jsonl")
         if os.path.isfile(path) and os.path.getsize(path) > METRICS_MAX_BYTES:
             os.replace(path, path + ".old")
     except Exception:
@@ -67,7 +68,8 @@ def _metric(event, session_id=None, **extra):
     if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+            os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:

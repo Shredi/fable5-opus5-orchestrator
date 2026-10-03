@@ -43,6 +43,7 @@ def _sandbox_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("FABLE_ORCH_METRICS", "1")
+    monkeypatch.delenv("FABLE_ORCH_METRICS_DIR", raising=False)
     return home
 
 
@@ -90,3 +91,16 @@ def test_harness_key_omitted_when_env_blank(tmp_path, monkeypatch, script):
     lines = _metrics_lines(home)
     assert len(lines) == 1
     assert "harness" not in lines[0]
+
+
+@pytest.mark.parametrize("script", GUARD_SCRIPTS)
+def test_metrics_dir_env_overrides_the_home_default(tmp_path, monkeypatch, script):
+    home = _sandbox_home(tmp_path, monkeypatch)
+    custom = tmp_path / "custom-metrics"
+    monkeypatch.setenv("FABLE_ORCH_METRICS_DIR", str(custom))
+    mod = _load(script)
+    mod._metric("probe", "sess-12345678")
+    assert _metrics_lines(home) == []  # default location untouched
+    lines = [json.loads(l) for l in (custom / "metrics.jsonl")
+             .read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert [r["event"] for r in lines] == ["probe"]

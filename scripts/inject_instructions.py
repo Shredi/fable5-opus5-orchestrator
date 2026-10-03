@@ -126,7 +126,8 @@ def _metric(event, session_id=None, **extra):
     if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+            os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
