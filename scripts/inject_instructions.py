@@ -180,8 +180,8 @@ def _read_marker(cache):
     pre-0.15.0 versions and on sessions whose fires were all teammate
     skips; in both cases the caller must fall back to the full core.
 
-    `ledger` is the D1 per-session ledger binding (scripts/ledger_bind.py,
-    and the spawn/task guards' adoption-on-discovery). It must be carried
+    `ledger` is the D1 per-session ledger binding (scripts/ledger_bind.py:
+    a Write/Edit of a ledger; nothing else binds). It must be carried
     forward through every marker rewrite below — SessionStart re-fires on
     resume/clear/compact and rewrites this file each time, and a rewrite
     that dropped the key would silently unbind the session mid-workflow."""
@@ -240,7 +240,7 @@ def ledger_reminder(fire, ledger):
     """The 'your ledger is still on disk' line, or '' when it doesn't apply.
 
     Only for a session that already carries a `ledger` binding (written
-    by the write guard / spawn-guard adoption): with no binding there is
+    by ledger_bind.py on a ledger Write/Edit): with no binding there is
     no path to name, and pointing an unbound session at a stale ledger
     would hand it another task's requirements.
 

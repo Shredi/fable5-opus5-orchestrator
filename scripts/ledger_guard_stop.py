@@ -8,17 +8,17 @@ Blocking is SCOPED so the reminder doesn't tax every conversational turn
 (measured in the wild: hundreds of per-turn blocks per project):
 
   1. OWNERSHIP — block only on the ledger THIS session is bound to:
-     bound by writing it (ledger_bind.py) or by adopting an unclaimed
-     one at a spawn/task gate (a ledger another live session already
-     holds is never adopted). No marker (manual install) = legacy
+     bound by writing or editing it (ledger_bind.py) — never by
+     discovery or adoption, so another task's open ledger is never
+     listed. No marker (manual install, nothing can bind) = legacy
      newest-wins discovery.
   2. CADENCE — once per session per ledger. A sidecar file in the
      temp dir records the ledgers this session was already held on.
 
 LEDGER_GUARD_STOP_MODE=every-turn restores the legacy per-turn blocking.
 
-Any .workflow/LEDGER*.md counts (most recent wins; *-archive.md is
-retired). It is searched from the working directory upward, stopping at
+Legacy discovery (no marker only): any .workflow/LEDGER*.md counts (most
+recent wins; *-archive.md is retired). It is searched from the working directory upward, stopping at
 the first directory containing .git (a FILE in worktrees/submodules —
 still a boundary) or at $HOME, so a ledger above the home directory can
 never hold unrelated sessions.
@@ -638,8 +638,8 @@ def run_guard(data):
     if marker is not None:
         # D1 per-session binding: bound -> hold ONLY that ledger; the
         # binding itself IS the ownership decision now (no mtime check).
-        # Marker present but unbound (no ledger Write/Edit/MultiEdit yet,
-        # no spawn/task adoption) -> never block. This is the actual fix:
+        # Marker present but unbound (no ledger Write/Edit/MultiEdit yet)
+        # -> never block. This is the actual fix:
         # a marker used to fall back to mtime-based "ownership", which a
         # concurrent session's newer ledger could satisfy falsely.
         ledger = _bound_ledger(session_id)

@@ -22,23 +22,42 @@ BODY = (
 )
 
 
+SID = "sid-test"
+
+
+def _markers(cwd):
+    return cwd / ".markers"  # this test's private temp dir for session markers
+
+
 def ledger(cwd, *args, env=None):
-    # Never inherit the live session's id or LEDGER from the test runner.
+    # Never inherit the live session's id or LEDGER from the test runner;
+    # run as session SID with markers in the test's own temp dir.
     base = {k: v for k, v in os.environ.items()
             if k not in ("CLAUDE_CODE_SESSION_ID", "LEDGER")}
+    tmp = str(_markers(cwd))
+    session = {"CLAUDE_CODE_SESSION_ID": SID, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp}
     return subprocess.run(
         [sys.executable, str(SCRIPTS / "ledger.py"), *args],
         cwd=str(cwd), capture_output=True, text=True, timeout=30,
-        env={**base, **(env or {})},
+        env={**base, **session, **(env or {})},
     )
 
 
-def make(tmp_path, body=BODY, name="LEDGER-topic.md", newline="\n"):
+def bind(tmp_path, p, sid=SID):
+    """What ledger_bind.py does when a session writes/edits `p`."""
+    _markers(tmp_path).mkdir(exist_ok=True)
+    (_markers(tmp_path) / f"fable-orch-model-{sid}.json").write_text(
+        json.dumps({"ledger": str(p.resolve())}), encoding="utf-8")
+
+
+def make(tmp_path, body=BODY, name="LEDGER-topic.md", newline="\n", bound=True):
     d = tmp_path / ".workflow"
     d.mkdir(exist_ok=True)
     p = d / name
     with open(p, "w", encoding="utf-8", newline="") as f:
         f.write(body.replace("\n", newline))
+    if bound:  # writing a ledger binds the writing session
+        bind(tmp_path, p)
     return p
 
 
@@ -131,17 +150,20 @@ def test_v_needs_verifier_flag(tmp_path):
     assert "- [x] V. fresh-eyes" in read(p)
 
 
-def test_auto_pick_ambiguous_and_zero(tmp_path):
+def test_unbound_session_never_falls_back_to_another_ledger(tmp_path):
+    # 03.10.2026: an unbound session resolved to the newest open ledger of
+    # another task. Now: no binding -> error, file untouched, even with a
+    # single live ledger sitting in .workflow/.
     r = ledger(tmp_path, "status")
-    assert r.returncode == 1 and "no live ledger" in r.stderr
-    make(tmp_path, name="LEDGER-a.md")
-    make(tmp_path, name="LEDGER-old-archive.md")
-    assert ledger(tmp_path, "status").returncode == 0  # archive excluded
-    make(tmp_path, name="LEDGER-b.md")
-    r = ledger(tmp_path, "status")
-    assert r.returncode == 1
-    assert "LEDGER-a.md" in r.stderr and "LEDGER-b.md" in r.stderr
-    p = tmp_path / ".workflow" / "LEDGER-b.md"
+    assert r.returncode == 1 and "LEDGER-<topic>.md" in r.stderr
+    p = make(tmp_path, name="LEDGER-foreign.md", bound=False)
+    for args in (("status",), ("mark", "1"), ("defer", "1", "r"),
+                 ("add", "x"), ("note", "1", "n")):
+        r = ledger(tmp_path, *args)
+        assert r.returncode == 1, args
+        assert "no ledger of its own" in r.stderr and "LEDGER-foreign" not in r.stdout
+    assert read(p) == BODY
+    # deliberate one-off access still works
     assert ledger(tmp_path, "-f", str(p), "mark", "1").returncode == 0
 
 
@@ -161,37 +183,23 @@ def test_crlf_preserved(tmp_path):
     assert out.endswith("passed\r\n")
 
 
-def test_session_bound_ledger_wins_over_ambiguity(tmp_path):
+def test_session_bound_ledger_is_the_only_pick(tmp_path):
     a = make(tmp_path, name="LEDGER-a.md")
-    make(tmp_path, name="LEDGER-b.md")
-    tmp = tmp_path / "tmp"
-    tmp.mkdir()
-    (tmp / "fable-orch-model-sid-1.json").write_text(
-        json.dumps({"ledger": str(a.resolve())}), encoding="utf-8")
-    env = {"CLAUDE_CODE_SESSION_ID": "sid-1", "TMPDIR": str(tmp),
-           "TEMP": str(tmp), "TMP": str(tmp)}
-    r = ledger(tmp_path, "status", env=env)
+    make(tmp_path, name="LEDGER-b.md", bound=False)  # newer, someone else's
+    r = ledger(tmp_path, "status")
     assert r.returncode == 0, r.stderr
     assert "LEDGER-a.md" in r.stdout
-    # a bound ledger that was archived away is not live -> falls through
+    # another session id sees no ledger at all
+    r = ledger(tmp_path, "status", env={"CLAUDE_CODE_SESSION_ID": "sid-other"})
+    assert r.returncode == 1 and "no ledger of its own" in r.stderr
+    # a bound ledger archived away is not live -> error, never b
     a.rename(a.with_name("LEDGER-a-archive.md"))
-    r = ledger(tmp_path, "status", env=env)
-    assert r.returncode == 0 and "LEDGER-b.md" in r.stdout, r.stderr
+    r = ledger(tmp_path, "status")
+    assert r.returncode == 1 and "LEDGER-b.md" not in r.stdout + r.stderr
 
 
 def test_env_ledger_is_used(tmp_path):
-    make(tmp_path, name="LEDGER-a.md")
-    b = make(tmp_path, name="LEDGER-b.md")
-    assert ledger(tmp_path, "mark", "1", env={"LEDGER": str(b)}).returncode == 0
-    assert "- [x] 1. first\n" in read(b)
-
-
-def test_ambiguous_list_is_capped(tmp_path):
-    for i in range(8):
-        p = make(tmp_path, name=f"LEDGER-{i}.md")
-        os.utime(p, (1000 + i, 1000 + i))
-    r = ledger(tmp_path, "status")
-    assert r.returncode == 1
-    assert "8 live ledgers" in r.stderr and "(3 more)" in r.stderr
-    assert "LEDGER-7.md" in r.stderr and "LEDGER-0.md" not in r.stderr
-    assert "LEDGER=" in r.stderr
+    a = make(tmp_path, name="LEDGER-a.md", bound=False)
+    make(tmp_path, name="LEDGER-b.md")  # bound, but LEDGER= wins
+    assert ledger(tmp_path, "mark", "1", env={"LEDGER": str(a)}).returncode == 0
+    assert "- [x] 1. first\n" in read(a)

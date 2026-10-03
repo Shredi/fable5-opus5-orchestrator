@@ -1,13 +1,13 @@
 """D1 per-session ledger binding: scripts/ledger_bind.py (the PostToolUse
-binder), the spawn/task guard's adoption-on-discovery, the close guard's
-bound-only resolution, and the injector's carry-forward of the `ledger`
+binder — writing OR editing a ledger is the only way to bind), the
+spawn/task guard's refusal to adopt a discovered ledger, the close
+guard's bound-only resolution, and the injector's carry-forward of the `ledger`
 marker key across resume/clear/compact re-injections.
 
 The core behavioral fix under test: two sessions in the same repo no
 longer share one newest-mtime "active ledger" — each session, once
 bound, sees only its own, and a marker that exists but was never bound
-(no Write/Edit/MultiEdit to a ledger, no satisfied spawn/task gate) must
-never hold a close hostage to a ledger it never touched.
+(no Write/Edit/MultiEdit to a ledger) must never hold a close hostage to a ledger it never touched.
 """
 import json
 import os
@@ -137,20 +137,41 @@ def test_missing_file_path_is_a_noop(tmp_path):
 
 # --- spawn/task gate adoption --------------------------------------------
 
-def test_spawn_adoption_binds_a_discovered_ledger(repo_dir, tmp_path):
+def _is_deny(result):
+    return (result is not None
+            and result["hookSpecificOutput"]["permissionDecision"] == "deny")
+
+
+def test_spawn_never_adopts_a_discovered_ledger(repo_dir, tmp_path):
+    # 03.10.2026 repro: fresh session, an ended session's open ledger in
+    # .workflow/ (no live marker holds it). The spawn used to pass and
+    # bind that ledger; now it is denied and the session stays unbound.
     write_marker(tmp_path, time.time())  # marker exists, not yet bound
-    ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
-    assert marker(tmp_path)["ledger"] == os.path.realpath(str(ledger))
+    write_ledger(repo_dir, "- [ ] 1. someone else's open item\n")
+    result = run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path)
+    assert _is_deny(result)
+    reason = result["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "no ledger of its own" in reason and "LEDGER-<topic>.md" in reason
+    assert "ledger" not in marker(tmp_path)
+    # ...and its close is never held on the stranger's items.
+    assert run_hook(STOP, stop_payload(repo_dir), tmpdir=tmp_path) is None
 
 
-def test_task_create_adoption_binds_a_discovered_ledger(repo_dir, tmp_path):
+def test_fork_spawn_stays_exempt_when_unbound(repo_dir, tmp_path):
+    write_marker(tmp_path, time.time())
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    payload = spawn_payload(repo_dir)
+    payload["tool_input"]["subagent_type"] = "fork"
+    assert run_hook(SPAWN, payload, tmpdir=tmp_path) is None
+
+
+def test_task_create_never_adopts_a_discovered_ledger(repo_dir, tmp_path):
     write_marker(tmp_path, time.time(), session="task-session")
-    ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
-    assert run_hook(
-        SPAWN, task_payload(repo_dir, session_id="task-session"), tmpdir=tmp_path
-    ) is None
-    assert marker(tmp_path, "task-session")["ledger"] == os.path.realpath(str(ledger))
+    write_ledger(repo_dir, "- [ ] 1. open\n")
+    results = [run_hook(SPAWN, task_payload(repo_dir, session_id="task-session"),
+                        tmpdir=tmp_path) for _ in range(3)]
+    assert results[:2] == [None, None] and _is_deny(results[2])
+    assert "ledger" not in marker(tmp_path, "task-session")
 
 
 def test_no_adoption_without_a_marker(repo_dir, tmp_path):
@@ -223,19 +244,21 @@ def test_unbind_when_bound_path_is_archived(repo_dir, tmp_path):
     assert "ledger" not in marker(tmp_path)
 
 
-def test_unbind_then_rebind_via_adoption(repo_dir, tmp_path):
+def test_unbind_then_rebind_only_via_edit(repo_dir, tmp_path):
     # After an unbind the session is simply unbound (no auto-block, no
-    # silent fallback to legacy discovery within the same call) until it
-    # binds again — here via a fresh spawn's adoption.
+    # fallback to discovery) until it binds again by editing a ledger.
     ledger = write_ledger(repo_dir, "- [ ] 1. open\n")
     write_marker(tmp_path, time.time(), ledger=ledger)
     ledger.unlink()
     assert run_hook(STOP, stop_payload(repo_dir), tmpdir=tmp_path) is None
 
     fresh = write_ledger(repo_dir, "- [ ] 1. new open item\n")
-    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
-    assert marker(tmp_path)["ledger"] == os.path.realpath(str(fresh))
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path))
+    assert "ledger" not in marker(tmp_path)
 
+    run_hook(BIND, bind_payload("test-session", fresh, tool_name="Edit"), tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(fresh))
+    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
     result = run_hook(STOP, stop_payload(repo_dir), tmpdir=tmp_path)
     assert result["decision"] == "block"
 
@@ -291,14 +314,13 @@ def test_edit_and_multiedit_tool_names_actually_bind(repo_dir, tmp_path):
         assert marker(tmp_path, session_id)["ledger"] == os.path.realpath(str(ledger))
 
 
-def test_archived_bound_ledger_lets_a_spawn_adopt_a_live_sibling(repo_dir, tmp_path):
+def test_archived_bound_ledger_never_falls_to_a_live_sibling(repo_dir, tmp_path):
     bound = write_ledger(repo_dir, "- [x] 1. done\n")
     write_marker(tmp_path, time.time(), ledger=bound)
-    archived = bound.with_name("LEDGER-topic-archive.md")
-    bound.rename(archived)
-    sibling = _named_ledger(repo_dir, "LEDGER-sibling.md", "- [ ] 1. open\n")
-    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
-    assert marker(tmp_path)["ledger"] == os.path.realpath(str(sibling))
+    bound.rename(bound.with_name("LEDGER-topic-archive.md"))
+    _named_ledger(repo_dir, "LEDGER-sibling.md", "- [ ] 1. open\n")
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path))
+    assert "ledger" not in marker(tmp_path)
 
 
 def test_corrupt_marker_json_never_blocks_or_crashes(repo_dir, tmp_path):
@@ -329,7 +351,7 @@ def test_ordinary_no_ledger_session_writes_no_metrics_line(repo_dir, tmp_path):
     assert not (home / ".claude" / "fable-orch" / "metrics.jsonl").exists()
 
 
-# --- foreign-ledger adoption: pass, don't bind ---------------------------
+# --- foreign ledgers: never satisfy, never bind --------------------------
 
 def _foreign_setup(repo_dir, tmp_path):
     """S1 bound to ledger A; S2 has a marker but no binding yet."""
@@ -341,8 +363,8 @@ def _foreign_setup(repo_dir, tmp_path):
 
 def test_spawn_never_adopts_a_ledger_another_live_session_holds(repo_dir, tmp_path):
     _foreign_setup(repo_dir, tmp_path)
-    # Gate passes (the foreign ledger satisfies it) but S2 stays unbound...
-    assert run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path) is None
+    # S1's open ledger does not satisfy S2's gate, and S2 stays unbound...
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path))
     assert "ledger" not in marker(tmp_path, "s2")
     # ...so its Stop is never held on S1's open items.
     assert run_hook(STOP, stop_payload(repo_dir, "s2"), tmpdir=tmp_path) is None
@@ -367,17 +389,14 @@ def test_session_writing_its_own_ledger_holds_on_it_not_the_foreign_one(repo_dir
     assert "a's item" not in result["reason"]
 
 
-def test_adoption_resumes_once_the_other_session_marker_is_gone(repo_dir, tmp_path):
+def test_ended_sessions_ledger_is_continued_only_by_an_edit(repo_dir, tmp_path):
+    # resume / after /clear / a /spawn child: the ledger's owner marker is
+    # gone, yet nothing adopts it implicitly — one Edit is the explicit act.
     ledger_a = _foreign_setup(repo_dir, tmp_path)
     marker_path(tmp_path, "s1").unlink()  # SessionEnd cleanup
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path))
+    assert "ledger" not in marker(tmp_path, "s2")
+    run_hook(BIND, bind_payload("s2", ledger_a, tool_name="Edit"), tmpdir=tmp_path)
     assert run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path) is None
-    assert marker(tmp_path, "s2")["ledger"] == os.path.realpath(str(ledger_a))
-
-
-def test_corrupt_foreign_markers_fail_open_to_adoption(repo_dir, tmp_path):
-    ledger_a = _named_ledger(repo_dir, "LEDGER-a.md", "- [ ] 1. a's item\n")
-    write_marker(tmp_path, time.time(), session="s2")
-    marker_path(tmp_path, "junk").write_text("{not json", encoding="utf-8")
-    marker_path(tmp_path, "list").write_text("[1, 2]", encoding="utf-8")
-    assert run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path) is None
-    assert marker(tmp_path, "s2")["ledger"] == os.path.realpath(str(ledger_a))
+    result = run_hook(STOP, stop_payload(repo_dir, "s2"), tmpdir=tmp_path)
+    assert result["decision"] == "block" and "a's item" in result["reason"]

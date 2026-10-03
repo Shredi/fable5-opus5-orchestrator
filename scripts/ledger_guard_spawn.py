@@ -2,9 +2,8 @@
 """PreToolUse guard (Agent|Task|Workflow|TaskCreate): keep multi-phase work on the ledger.
 
 Dynamic Workflow Rule 1: serious multi-phase delegation requires
-a Requirements Ledger in .workflow/ — any LEDGER*.md there, most
-recent wins, *-archive.md excluded (searched from the working
-directory up to the repo root or $HOME). Short spawn
+this session's own Requirements Ledger in .workflow/ (see Binding
+below; LEDGER*.md, *-archive.md excluded). Short spawn
 prompts (quick searches/lookups) pass freely so casual Explore
 agents are never blocked.
 
@@ -39,12 +38,14 @@ last week's finished ledger would silence the gates in a repo forever.
 A ledger with open items, or one touched this session, always
 satisfies; without a marker (manual install) existence alone wins.
 
-Adoption: an unbound session that a discovered ledger satisfies binds to
-it (/clear continuations, ended sessions' ledgers) — unless another LIVE
-session's marker already holds that ledger. Discovery picks the newest
-mtime, which is usually a concurrent tab's ledger; binding to it would
-make the Stop guard hold this session on someone else's open items. A
-foreign ledger still satisfies the gate, it just never binds.
+Binding, no fallback: with a session marker, ONLY the ledger this
+session is bound to counts — bound by a Write/Edit/MultiEdit of it
+(ledger_bind.py). An unbound session is denied even when other open
+ledgers sit in .workflow/: those belong to other tasks, and there is no
+adoption by discovery (03.10.2026: a fresh session adopted an ended
+session's newest open ledger at its first spawn). Continuing an
+existing ledger on purpose (resume, /clear, /spawn child) = Edit it
+once, which binds. No marker (manual install) = legacy discovery.
 
 Configuration (all optional):
     LEDGER_GUARD_THRESHOLD   gate in chars (default 1500; unparseable
@@ -180,15 +181,9 @@ def guard_task_create(data):
     if limit <= 0:
         return
     session_id = data.get("session_id")
-    bound = _bound_ledger(session_id)
-    ledger = bound or find_ledger(data.get("cwd"))
+    ledger = _session_ledger(data)
     stale = bool(ledger) and not ledger_satisfies(ledger, session_id)
     if ledger and not stale:
-        if not bound:
-            if _claimed_elsewhere(ledger, session_id):
-                _metric("adopt_skipped", session_id, reason="foreign", ledger=ledger)
-            else:
-                _bind_ledger(session_id, ledger)  # adoption: this session now owns it
         return
 
     path = _task_sidecar(session_id)
@@ -217,8 +212,9 @@ def guard_task_create(data):
             "permissionDecision": "deny",
             "permissionDecisionReason": (
                 f"LEDGER GUARD: this is tracker task #{count} this session — "
-                "multi-phase work — but no active ledger exists in any "
-                f".workflow/ from the working directory up to the repo root{stale_note}. "
+                "multi-phase work — but this session has no ledger of its "
+                f"own{stale_note}; another session's ledger in .workflow/ "
+                "never counts. "
                 "Rule 0's hard cap: work that needs a task list of 3+ items is "
                 "OVER the orchestration threshold, and an approved plan is NOT "
                 "an exemption. Write the numbered Requirements Ledger to "
@@ -227,8 +223,9 @@ def guard_task_create(data):
                 "then delegate implementation to "
                 "sonnet workers citing ledger items instead of implementing "
                 "the phases yourself. Writing it binds THIS session to that "
-                "ledger, so a concurrent session's ledger never satisfies or "
-                "blocks this one. Re-issue this task afterwards — this "
+                "ledger. To continue an existing ledger on purpose (resumed "
+                "session, after /clear, /spawn child), Edit it once instead "
+                "— that binds it. Re-issue this task afterwards — this "
                 "reminder fires once per session."
             ),
         }
@@ -373,45 +370,22 @@ def _bound_ledger(session_id):
     return None
 
 
-def _bind_ledger(session_id, ledger):
-    """Bind (or rebind) this session's marker to `ledger` — best effort,
-    a no-op when there is no marker to bind onto."""
-    marker = _marker_dict(session_id)
-    if marker is None:
-        return
-    marker["ledger"] = ledger
-    _write_marker_dict(session_id, marker)
+def _session_ledger(data):
+    """The ledger that counts for this session's gates, or None.
 
-
-def _claimed_elsewhere(ledger, session_id):
-    """True if another live session's marker is already bound to `ledger`.
-
-    Discovery returns the newest-mtime ledger, which is often a concurrent
-    session's; adopting it would bind us to work that isn't ours. Markers
-    of ended sessions are deleted by SessionEnd, so any marker still in
-    the temp dir belongs to a live session. Fails open (False, i.e. adopt
-    as before) on any error; an unreadable/non-dict marker is skipped.
+    Marker present (the normal plugin install): ONLY the ledger this
+    session is bound to — bound by writing or editing it (ledger_bind.py),
+    never by discovery. Another session's ledger in the same .workflow/,
+    however new or open, neither satisfies the gate nor gets adopted: a
+    session without its own ledger writes a new one, or continues an
+    existing one on purpose by editing it. No marker at all (manual
+    install without the injector, or before the first SessionStart fire):
+    nothing can ever bind, so legacy newest-wins discovery stays.
     """
-    try:
-        safe = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
-        own = f"fable-orch-model-{safe}.json"
-        target = os.path.realpath(ledger)
-        tmp = tempfile.gettempdir()
-        for name in os.listdir(tmp):
-            if name == own or not (
-                name.startswith("fable-orch-model-") and name.endswith(".json")
-            ):
-                continue
-            try:
-                with open(os.path.join(tmp, name), encoding="utf-8") as f:
-                    other = json.load(f).get("ledger")
-                if isinstance(other, str) and os.path.realpath(other) == target:
-                    return True
-            except Exception:
-                continue
-        return False
-    except Exception:
-        return False
+    session_id = data.get("session_id")
+    if _marker_dict(session_id) is not None:
+        return _bound_ledger(session_id)
+    return find_ledger(data.get("cwd"))
 
 
 def _session_started(session_id):
@@ -482,15 +456,9 @@ def _guard(data):
         return
 
     session_id = data.get("session_id")
-    bound = _bound_ledger(session_id)
-    ledger = bound or find_ledger(data.get("cwd"))
+    ledger = _session_ledger(data)
     stale = bool(ledger) and not ledger_satisfies(ledger, session_id)
     if ledger and not stale:
-        if not bound:
-            if _claimed_elsewhere(ledger, session_id):
-                _metric("adopt_skipped", session_id, reason="foreign", ledger=ledger)
-            else:
-                _bind_ledger(session_id, ledger)  # adoption: this session now owns it
         _metric("spawn_pass_over_threshold", session_id,
                 chars=len(text), threshold=limit,
                 tool=data.get("tool_name") or "")
@@ -510,16 +478,17 @@ def _guard(data):
             "permissionDecision": "deny",
             "permissionDecisionReason": (
                 f"LEDGER GUARD: this looks like a detailed delegation "
-                f"({what} > {limit} chars) but no active ledger exists in "
-                f"any .workflow/ from the working directory up to the repo root"
-                f"{stale_note}. Per Dynamic Workflow Rule 1, first write the "
+                f"({what} > {limit} chars) but this session has no ledger "
+                f"of its own{stale_note}; another session's ledger in "
+                ".workflow/ never counts. Per Dynamic Workflow Rule 1, first write a new "
                 "numbered Requirements Ledger to a topic-named "
                 "./.workflow/LEDGER-<topic>.md (pick a fresh topic name — "
                 "NEVER overwrite an existing ledger file; checkbox format: "
                 "'- [ ] N. <item>'), then re-spawn citing "
                 "which ledger items each agent covers. Writing it binds THIS "
-                "session to that ledger, so a concurrent session's ledger "
-                "never satisfies or blocks this one. If this is genuinely a "
+                "session to that ledger. To continue an existing ledger on "
+                "purpose (resumed session, after /clear, /spawn child), Edit "
+                "it once instead — that binds it. If this is genuinely a "
                 "small single-phase task, do it directly; if it is "
                 "multi-phase, write the ledger and delegate — never keep "
                 "multi-phase work solo."

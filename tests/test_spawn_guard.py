@@ -182,13 +182,13 @@ def test_archive_suffixed_ledger_does_not_satisfy_the_gate(repo_dir):
     assert is_deny(run_hook(SCRIPT, spawn_payload(repo_dir)))
 
 
-def test_most_recent_ledger_wins(repo_dir, tmp_path):
+def test_bound_ledger_decides_next_to_a_stale_one(repo_dir, tmp_path):
     # A directory can hold a stale closed LEDGER.md next to a live
-    # per-task one (seen in ad-intel-saas). The live one decides.
-    write_marker(tmp_path, time.time())
+    # per-task one (seen in ad-intel-saas). The bound live one decides.
     _write_named_ledger(repo_dir, "LEDGER.md", "- [x] 1. done\n",
                         age=time.time() - 7200)
-    _write_named_ledger(repo_dir, "LEDGER-F4-backend.md", "- [ ] 1. open\n")
+    live = _write_named_ledger(repo_dir, "LEDGER-F4-backend.md", "- [ ] 1. open\n")
+    write_marker(tmp_path, time.time(), ledger=live)
     assert run_hook(SCRIPT, spawn_payload(repo_dir, prompt=VERY_LONG),
                     tmpdir=tmp_path) is None
 
@@ -342,33 +342,33 @@ def _stale_completed_ledger(repo, age=3600):
 
 
 def test_stale_completed_ledger_rearms_spawn_gate(repo_dir, tmp_path):
-    write_marker(tmp_path, time.time())          # session started NOW
-    _stale_completed_ledger(repo_dir)            # finished long before
+    stale = _stale_completed_ledger(repo_dir)    # finished long before
+    write_marker(tmp_path, time.time(), ledger=stale)  # session started NOW
     result = run_hook(SCRIPT, spawn_payload(repo_dir), tmpdir=tmp_path)
     assert is_deny(result)
     assert "previous session" in result["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_stale_completed_ledger_rearms_task_gate(repo_dir, tmp_path):
-    write_marker(tmp_path, time.time(), session="task-guard-session")
-    _stale_completed_ledger(repo_dir)
+    stale = _stale_completed_ledger(repo_dir)
+    write_marker(tmp_path, time.time(), session="task-guard-session", ledger=stale)
     results = run_tasks(repo_dir, tmp_path, 3)
     assert results[:2] == [None, None] and is_deny(results[2])
 
 
 def test_old_ledger_with_open_items_still_satisfies(repo_dir, tmp_path):
     import os
-    write_marker(tmp_path, time.time())
     ledger = write_ledger(repo_dir, "- [ ] 1. still open\n")
     old = time.time() - 3600
     os.utime(ledger, (old, old))
+    write_marker(tmp_path, time.time(), ledger=ledger)
     assert run_hook(SCRIPT, spawn_payload(repo_dir, prompt=VERY_LONG), tmpdir=tmp_path) is None
 
 
 def test_fresh_completed_ledger_still_satisfies(repo_dir, tmp_path):
     # Closed THIS session (mtime after started): follow-up spawns pass.
-    write_marker(tmp_path, time.time() - 3600)
-    write_ledger(repo_dir, "- [x] 1. done\n")
+    ledger = write_ledger(repo_dir, "- [x] 1. done\n")
+    write_marker(tmp_path, time.time() - 3600, ledger=ledger)
     assert run_hook(SCRIPT, spawn_payload(repo_dir, prompt=VERY_LONG), tmpdir=tmp_path) is None
 
 

@@ -13,8 +13,9 @@ Replaces the ad-hoc `python3 -` heredocs chairs used to edit
 
 Ledger: `-f PATH`, else env LEDGER, else this session's bound ledger
 (the hooks' marker, key "ledger", via CLAUDE_CODE_SESSION_ID) if it is
-still live, else the single live ledger in ./.workflow/ (same name rule
-as the hooks; *-archive.md excluded). Zero or several -> error.
+still live. Nothing else: no fallback to whatever ledger sits in
+./.workflow/ — an unbound session gets an error telling it to write a
+new LEDGER-<topic>.md (writing or editing a ledger binds the session).
 Parsing shares the stop guard's fence handling and open-item regex, so
 items inside ``` fences are never touched. Edits are atomic (temp file
 in the same directory + os.replace), keep the file's line endings and
@@ -46,9 +47,6 @@ class LedgerError(Exception):
     pass
 
 
-MAX_CANDIDATES = 5
-
-
 def _session_ledger():
     """This session's bound ledger from the hooks' marker, or None."""
     marker = session_marker_path(os.environ.get("CLAUDE_CODE_SESSION_ID"))
@@ -76,23 +74,11 @@ def resolve(path_arg):
     bound = _session_ledger()
     if bound:
         return bound
-    workflow = os.path.join(os.getcwd(), ".workflow")
-    try:
-        names = os.listdir(workflow)
-    except OSError:
-        names = []
-    found = [os.path.join(".workflow", n) for n in names
-             if _is_live_ledger_name(n) and os.path.isfile(os.path.join(workflow, n))]
-    if len(found) == 1:
-        return found[0]
-    if not found:
-        raise LedgerError("no live ledger in ./.workflow/ — pass -f PATH or set LEDGER=PATH")
-    found.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    shown = found[:MAX_CANDIDATES]
-    more = len(found) - len(shown)
-    raise LedgerError(f"{len(found)} live ledgers in ./.workflow/ — pass -f PATH "
-                      "or set LEDGER=PATH; most recent:\n  " + "\n  ".join(shown)
-                      + (f"\n  ({more} more)" if more else ""))
+    raise LedgerError(
+        "this session has no ledger of its own — write a new "
+        ".workflow/LEDGER-<topic>.md (writing it binds this session; never "
+        "reuse another session's ledger). To continue an existing ledger on "
+        "purpose, Edit it once (that binds it); `-f PATH` for one-off access.")
 
 
 def split_eol(line):
