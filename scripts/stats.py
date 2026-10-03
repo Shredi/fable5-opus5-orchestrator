@@ -27,8 +27,9 @@ def records(path):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
-        os.path.expanduser("~"), ".claude", "fable-orch", "metrics.jsonl")
+    metrics_dir = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+        os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(metrics_dir, "metrics.jsonl")
     if not os.path.isfile(path):
         print(f"no metrics yet: {path}")
         return

@@ -11,7 +11,8 @@ Blocking is SCOPED so the reminder doesn't tax every conversational turn
      bound by writing or editing it (ledger_bind.py) — never by
      discovery or adoption, so another task's open ledger is never
      listed. A plugin session without a marker counts as unbound. Only a
-     manual install (no CLAUDE_PLUGIN_ROOT, nothing can bind) or a
+     manual install (neither CLAUDE_PLUGIN_ROOT nor
+     FABLE_ORCH_SESSION_BINDING=1, nothing can bind) or a
      payload without session id = legacy newest-wins discovery.
   2. CADENCE — once per session per ledger. A sidecar file in the
      temp dir records the ledgers this session was already held on.
@@ -63,7 +64,8 @@ def _metric(event, session_id=None, **extra):
     if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+            os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -217,6 +219,15 @@ def active_ledger_in(dirpath):
         if mtime > best_mtime:
             best, best_mtime = path, mtime
     return best
+
+
+def _plugin_install():
+    """True for a plugin session: Claude Code exports CLAUDE_PLUGIN_ROOT to
+    plugin hooks; other harnesses set the neutral FABLE_ORCH_SESSION_BINDING=1.
+    Same check in ledger_guard_spawn.py, ledger_guard_stop.py and
+    ledger_bind.py (standalone hook scripts, no shared module)."""
+    return bool((os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip()) or \
+        (os.environ.get("FABLE_ORCH_SESSION_BINDING") or "").strip() == "1"
 
 
 def find_ledger(start_dir):
@@ -652,7 +663,7 @@ def run_guard(data):
             if find_ledger(data.get("cwd")):
                 _metric("stop_suppressed", session_id, reason="unbound")
             return
-    elif session_id and (os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip():
+    elif session_id and _plugin_install():
         # Plugin session whose marker is gone (96 h sweep, OS temp
         # cleanup): unbound, never legacy discovery of someone's ledger.
         if find_ledger(data.get("cwd")):

@@ -198,6 +198,49 @@ def test_plugin_session_with_a_swept_marker_is_unbound_not_legacy(repo_dir, tmp_
     assert run_hook(SPAWN, spawn_payload(repo_dir), env_extra=plugin, tmpdir=tmp_path) is None
 
 
+def test_read_payload_never_binds_or_recreates_a_marker(repo_dir, tmp_path):
+    # The hook checks tool_name itself, not just the hooks.json matcher:
+    # a Read of a live ledger fed directly binds nothing, with or without
+    # a marker, and a failed Write does not bind either.
+    plugin = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    ledger = _named_ledger(repo_dir, "LEDGER-read.md")
+    run_hook(BIND, bind_payload("swept", ledger, tool_name="Read"),
+             env_extra=plugin, tmpdir=tmp_path)
+    assert not marker_path(tmp_path, "swept").exists()
+    write_marker(tmp_path, time.time())
+    run_hook(BIND, bind_payload("test-session", ledger, tool_name="Read"), tmpdir=tmp_path)
+    run_hook(BIND, bind_payload("test-session", ledger,
+                                tool_response={"success": False, "error": "denied"}),
+             tmpdir=tmp_path)
+    assert "ledger" not in marker(tmp_path)
+
+
+def test_subagent_ledger_edit_never_binds_the_chair(repo_dir, tmp_path):
+    # Subagents share the chair's session_id; their payloads carry
+    # agent_id + agent_type (live probe, Claude Code 2.1.288).
+    write_marker(tmp_path, time.time())
+    ledger = _named_ledger(repo_dir, "LEDGER-sub.md")
+    run_hook(BIND, bind_payload("test-session", ledger, tool_name="Edit",
+                                agent_id="a98e3468a760612f9",
+                                agent_type="general-purpose"), tmpdir=tmp_path)
+    assert "ledger" not in marker(tmp_path)
+    run_hook(BIND, bind_payload("test-session", ledger, tool_name="Edit"), tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(ledger))
+
+
+def test_neutral_session_binding_switch_acts_like_plugin_root(repo_dir, tmp_path):
+    # FABLE_ORCH_SESSION_BINDING=1 is the harness-neutral twin of
+    # CLAUDE_PLUGIN_ROOT: no legacy discovery for a marker-less session,
+    # and its ledger Write recreates the marker.
+    neutral = {"FABLE_ORCH_SESSION_BINDING": "1"}
+    write_ledger(repo_dir, "- [ ] 1. someone else's open item\n")
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir), env_extra=neutral, tmpdir=tmp_path))
+    assert run_hook(STOP, stop_payload(repo_dir), env_extra=neutral, tmpdir=tmp_path) is None
+    mine = _named_ledger(repo_dir, "LEDGER-mine.md")
+    run_hook(BIND, bind_payload("test-session", mine), env_extra=neutral, tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(mine))
+
+
 # --- two-session simulation: the actual D1 fix ---------------------------
 
 def test_two_sessions_each_bound_to_their_own_ledger(repo_dir, tmp_path):

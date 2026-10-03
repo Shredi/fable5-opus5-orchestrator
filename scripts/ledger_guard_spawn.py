@@ -46,7 +46,8 @@ adoption by discovery (03.10.2026: a fresh session adopted an ended
 session's newest open ledger at its first spawn). Continuing an
 existing ledger on purpose (resume, /clear, /spawn child) = Edit it
 once, which binds. No marker under the plugin = unbound too; only a
-manual install (no CLAUDE_PLUGIN_ROOT) or no session id = legacy discovery.
+manual install (neither CLAUDE_PLUGIN_ROOT nor FABLE_ORCH_SESSION_BINDING=1)
+or no session id = legacy discovery.
 
 Configuration (all optional):
     LEDGER_GUARD_THRESHOLD   gate in chars (default 1500; unparseable
@@ -56,6 +57,9 @@ Configuration (all optional):
                              task (default 3 — two tasks pass free;
                              0 or negative disables the task gate)
     FABLE_ORCH_METRICS=0     disables the local metrics log
+    FABLE_ORCH_SESSION_BINDING=1
+                             plugin session without CLAUDE_PLUGIN_ROOT
+                             (other harnesses): no legacy discovery
 """
 import json
 import os
@@ -83,7 +87,8 @@ def _metric(event, session_id=None, **extra):
     if (os.environ.get("FABLE_ORCH_METRICS") or "").strip() == "0":
         return
     try:
-        d = os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
+        d = os.path.expanduser((os.environ.get("FABLE_ORCH_METRICS_DIR") or "").strip()) or \
+            os.path.join(os.path.expanduser("~"), ".claude", "fable-orch")
         os.makedirs(d, exist_ok=True)
         rec = {"ts": round(time.time(), 3), "event": event}
         if session_id:
@@ -397,8 +402,10 @@ def _session_ledger(data):
 
 def _plugin_install():
     """True when this hook runs from the plugin (Claude Code exports
-    CLAUDE_PLUGIN_ROOT to plugin hooks), False for a manual install."""
-    return bool((os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip())
+    CLAUDE_PLUGIN_ROOT to plugin hooks) or a harness that sets the
+    neutral FABLE_ORCH_SESSION_BINDING=1, False for a manual install."""
+    return bool((os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip()) or \
+        (os.environ.get("FABLE_ORCH_SESSION_BINDING") or "").strip() == "1"
 
 
 def _session_started(session_id):

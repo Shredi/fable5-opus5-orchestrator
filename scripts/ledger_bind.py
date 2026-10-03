@@ -23,11 +23,16 @@ excluded. The parent directory must be literally named `.workflow` —
 this hook does not walk upward like `find_ledger()`; a Write outside
 that directory is not a ledger write.
 
-No session marker: a manual install (no CLAUDE_PLUGIN_ROOT) has nothing
+No session marker: a manual install (neither CLAUDE_PLUGIN_ROOT nor the
+harness-neutral FABLE_ORCH_SESSION_BINDING=1) has nothing
 to bind onto, so this hook does nothing; a plugin session whose marker
 was swept gets a minimal one ({"started", "ledger"}) recreated, because
 the gates treat it as unbound and it must be able to bind again. Every other file write, and every write whose
-target is not a live ledger name, is a no-op too.
+target is not a live ledger name, is a no-op too. The hook checks
+`tool_name` itself (Write/Edit/MultiEdit only) and ignores failed tool
+results, so a broadened matcher or another harness's payload can never
+bind or recreate a marker from a Read. A subagent's write (payload
+carries `agent_id`; it shares the chair's session_id) never binds.
 
 Always exits 0. Every failure mode (malformed stdin, unreadable
 marker, permission error on the atomic replace, ...) is swallowed —
@@ -48,6 +53,32 @@ def session_marker_path(session_id):
     return os.path.join(tempfile.gettempdir(), f"fable-orch-model-{safe}.json")
 
 
+def _plugin_install():
+    """True for a plugin session: Claude Code exports CLAUDE_PLUGIN_ROOT to
+    plugin hooks; other harnesses set the neutral FABLE_ORCH_SESSION_BINDING=1.
+    Same check in ledger_guard_spawn.py, ledger_guard_stop.py and
+    ledger_bind.py (standalone hook scripts, no shared module)."""
+    return bool((os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip()) or \
+        (os.environ.get("FABLE_ORCH_SESSION_BINDING") or "").strip() == "1"
+
+
+BIND_TOOLS = ("Write", "Edit", "MultiEdit")
+
+
+def _tool_failed(response):
+    """True when the PostToolUse payload reports a failed tool call.
+    Claude Code fires PostToolUse on success only (failures go to
+    PostToolUseFailure), but another harness or a broadened matcher may
+    deliver errors here: an explicit `success: false`, `is_error`, an
+    `error` field, or a bare error string never binds."""
+    if isinstance(response, dict):
+        return response.get("success") is False or bool(response.get("is_error")) \
+            or bool(response.get("error"))
+    if isinstance(response, str):
+        return response.lstrip().lower().startswith("error")
+    return False
+
+
 def _is_live_ledger_name(name):
     """Same live-name filter as active_ledger_in() in both guards:
     `LEDGER*.md`, case-insensitive, "ledger" a whole segment, and not
@@ -63,6 +94,19 @@ def _is_live_ledger_name(name):
 
 
 def _bind(data):
+    # Check the tool itself instead of trusting the hooks.json matcher
+    # alone: only a successful Write/Edit/MultiEdit binds or recreates
+    # a marker — a Read (or anything else) fed here is a no-op.
+    if data.get("tool_name") not in BIND_TOOLS:
+        return
+    if _tool_failed(data.get("tool_response")):
+        return
+    # A subagent shares the chair's session_id, so its ledger Edit would
+    # bind the CHAIR. Its payloads carry agent_id (+ agent_type); the
+    # chair's never do (live probe, Claude Code 2.1.288, PreToolUse and
+    # PostToolUse alike — same discriminator as chair_read_guard.py).
+    if data.get("agent_id"):
+        return
     session_id = data.get("session_id")
     cache = session_marker_path(session_id)
     if not cache:
@@ -73,7 +117,7 @@ def _bind(data):
         # temp cleanup): the gates treat it as unbound, so recreate a
         # minimal marker or it could never bind again. Manual install
         # (no CLAUDE_PLUGIN_ROOT): nothing to bind onto, as before.
-        if not (os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip():
+        if not _plugin_install():
             return
         recreate = True
 
