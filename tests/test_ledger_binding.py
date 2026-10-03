@@ -182,6 +182,22 @@ def test_no_adoption_without_a_marker(repo_dir, tmp_path):
     assert not marker_path(tmp_path).exists()
 
 
+def test_plugin_session_with_a_swept_marker_is_unbound_not_legacy(repo_dir, tmp_path):
+    # A live plugin session whose marker the 96 h sweep deleted must not
+    # fall into legacy discovery: another task's open ledger neither
+    # satisfies its spawn nor holds its close. Its own ledger Write
+    # recreates the marker and binds, so the session is never stuck.
+    plugin = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    write_ledger(repo_dir, "- [ ] 1. someone else's open item\n")
+    result = run_hook(SPAWN, spawn_payload(repo_dir), env_extra=plugin, tmpdir=tmp_path)
+    assert _is_deny(result)
+    assert run_hook(STOP, stop_payload(repo_dir), env_extra=plugin, tmpdir=tmp_path) is None
+    mine = _named_ledger(repo_dir, "LEDGER-mine.md")
+    run_hook(BIND, bind_payload("test-session", mine), env_extra=plugin, tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(mine))
+    assert run_hook(SPAWN, spawn_payload(repo_dir), env_extra=plugin, tmpdir=tmp_path) is None
+
+
 # --- two-session simulation: the actual D1 fix ---------------------------
 
 def test_two_sessions_each_bound_to_their_own_ledger(repo_dir, tmp_path):

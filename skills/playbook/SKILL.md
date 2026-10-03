@@ -94,7 +94,7 @@ The verifier is FRESH — it has not worked on the task. Give it the
 original request, the ledger path and the work-product paths (diffs,
 reports, not raw scratch). It reads from disk to find what
 is missing, wrong or unaddressed, item by item; only it closes `V.`
-(`ledger mark V --verifier`).
+(`ledger -f <path> mark V --verifier`).
 Findings become new phases; re-verify. CAP 3 cycles, then STOP and
 report the open items. Destructive commands are PROBED, never run:
 verifier and workers use `echo`/dry-run for anything with `rm`,
