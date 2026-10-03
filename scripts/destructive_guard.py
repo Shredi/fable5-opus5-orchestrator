@@ -322,7 +322,7 @@ def _is_recursive(tok):
 # --- path reasoning --------------------------------------------------------
 
 # Windows forms of an absolute path: `C:/...` (native, backslashes already
-# folded) and `/c/...` (Git Bash / MSYS, what `~` expands to on MGMT01).
+# folded) and `/c/...` (Git Bash / MSYS, what `~` expands to on a Windows host).
 # posixpath.isabs() knows neither, so without this a drive path would be
 # joined under cwd and a `rm -rf ~/*` under Git Bash lands "inside" the
 # project root and is waved through.

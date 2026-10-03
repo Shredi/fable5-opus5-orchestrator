@@ -49,7 +49,7 @@ def test_denies_the_2026_09_09_incident_line():
     assert "updatedInput" not in out
 
 
-# --- DENY: Windows drive paths (MGMT01 runs the hook under Git Bash) --------
+# --- DENY: Windows drive paths (winhost runs the hook under Git Bash) -------
 
 WIN_CWD = "C:/claude"
 
@@ -58,13 +58,13 @@ WIN_CWD = "C:/claude"
     "rm -rf C:/",
     "rm -rf C:/*",
     "rm -rf C:/Users",
-    "rm -rf C:/Users/marc",
-    "rm -rf C:/Users/marc/*",
+    "rm -rf C:/Users/alice",
+    "rm -rf C:/Users/alice/*",
     "rm -rf C:/Windows",
     'rm -rf "C:/Program Files"',
     "rm -rf /c/",
-    "rm -rf /c/Users/marc",
-    "rm -rf /c/Users/marc/*",
+    "rm -rf /c/Users/alice",
+    "rm -rf /c/Users/alice/*",
 ])
 def test_denies_windows_protected_targets(command):
     assert decide(command, cwd=WIN_CWD)[0] == "deny"
@@ -79,7 +79,7 @@ def test_allows_drive_path_inside_cwd():
 
 @POSIX  # HOME= pins the home; ntpath.expanduser never reads it
 def test_denies_home_glob_when_home_is_a_drive_path():
-    env = {"HOME": "C:\\Users\\marc"}
+    env = {"HOME": "C:\\Users\\alice"}
     assert decide("rm -rf ~/*", cwd=WIN_CWD, env_extra=env)[0] == "deny"
     assert decide("rm -rf ~/Documents", cwd=WIN_CWD, env_extra=env)[0] == "ask"
 
@@ -127,7 +127,7 @@ def test_denies_single_segment_home_of_another_user():
 
 @pytest.mark.parametrize("command", [
     "sudo rm -rf build",
-    "sudo -u marc rm -r build",
+    "sudo -u alice rm -r build",
     "/bin/rm -rf build",
     "/usr/bin/rm -R build",
     "command -p rm -rf build",
@@ -187,8 +187,8 @@ def test_denies_git_clean_with_an_exclude_pattern():
 # --- DENY: remote command strings (ledger item 11) --------------------------
 
 @pytest.mark.parametrize("command", [
-    "ssh root@mr3.comptec.de 'rm -rf $DIR'",
-    "ssh mr3 rm -rf /etc/postfix",
+    "ssh root@relay.example.org 'rm -rf $DIR'",
+    "ssh relay rm -rf /etc/postfix",
     "docker exec web rm -rf /var/lib/app",
     "kubectl exec pod -- rm -rf /data",
 ])
@@ -201,7 +201,7 @@ def test_denies_recursive_rm_on_another_machine(command):
 
 
 def test_allows_a_harmless_remote_command():
-    assert decide("ssh mr3 'systemctl reload postfix'")[0] == "allow"
+    assert decide("ssh relay 'systemctl reload postfix'")[0] == "allow"
 
 
 # --- DENY: the non-rm destructive families ----------------------------------
@@ -211,7 +211,7 @@ def test_allows_a_harmless_remote_command():
     "mkfs.ext4 /dev/sda1",
     "diskutil eraseDisk JHFS+ blank disk2",
     "chmod -R 777 /usr",
-    "chown -R marc /Library",
+    "chown -R alice /Library",
     'truncate -s 0 "$LOGFILE"',
     ": > $LOGFILE",
     "shred -u secret.txt",
@@ -326,7 +326,7 @@ def test_reading_the_guard_directory_stays_allowed(command):
     "rm -rf /tmp/scratch-dir",         # allowed root
     "rm foo.txt",                      # not recursive
     "git status",
-    "trash /Users/tester/Desktop/old-stuff",   # Marc's rule: trash over rm
+    "trash /Users/tester/Desktop/old-stuff",   # house rule: trash over rm
     "echo hello && ls -la",
     "docker rm -f web",                # `rm` as a docker subcommand
     'grep -rn "rm -rf" docs/',

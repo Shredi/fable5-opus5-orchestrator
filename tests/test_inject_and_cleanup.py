@@ -225,7 +225,7 @@ def test_effort_is_not_selectable_per_spawn():
 
 
 def test_project_agent_roster_is_checked_before_generic_spawn():
-    # Marc's decision (2026-09-04): a specialized project agent keeps
+    # The owner's decision (2026-09-04): a specialized project agent keeps
     # bulky domain output off the chair and carries its own
     # model:/effort: frontmatter — the chair should reach for one
     # before writing a generic worker spec. The plugin itself stays
@@ -281,7 +281,7 @@ def test_playbook_carries_the_worker_spec_and_long_output_blocks():
 
 
 def test_opus_primary_core_fable_is_reviewer_not_planner():
-    # Marc's decision (2026-09-27/28): Fable's planner role and the ≤2
+    # The owner's decision (2026-09-27/28): Fable's planner role and the ≤2
     # spawn cap are removed from opus-primary — Opus plans hard plans
     # itself. Fable becomes the REVIEWER tier: it reviews plans (when a
     # ledger exists) and verifies EVERY close, never builds or plans.
