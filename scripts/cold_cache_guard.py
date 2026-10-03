@@ -42,6 +42,15 @@ ALWAYS PASSES, no matter how cold or how large:
   * prompts starting with "/" — `/clear` is this hook's own advice, and
     blocking `/exit` or `/compact` would trap the user in the guard
   * empty prompts, teammate sessions, FABLE_ORCH_COLD_GUARD=0
+
+SKIPPED SILENTLY (no output, no marker write): submissions the harness
+makes on its own — background task notifications, subagent hand-backs /
+peer messages, local-command echoes, usage-limit and compaction notices.
+Claude Code routes them through UserPromptSubmit like a typed prompt,
+but no human is waiting on them, so a block would eat a worker's report
+and a warning would nag about a cost nobody chose. See
+`is_non_human_prompt`. The turn they trigger still ends in a Stop hook,
+whose `last_stop` keeps the warmth baseline honest.
 """
 import json
 import os
@@ -460,10 +469,66 @@ def warn_context(tokens, gap_seconds, ledger):
             f"cold; finish quickly or hand the task to a fresh session.")
 
 
+# --- non-human submissions --------------------------------------------
+
+# Harness-generated UserPromptSubmit payloads, by LEADING text (after
+# whitespace). Leading-only on purpose: a human prompt that merely
+# mentions "<task-notification>" mid-sentence must still count. Shapes
+# taken from live transcripts (Claude Code 2.x, 2026-10).
+NON_HUMAN_PREFIXES = (
+    "<task-notification>",                       # background task finished
+    "[SYSTEM NOTIFICATION",                      # background-task event frame
+    "Another Claude session sent a message:",    # subagent hand-back / peer
+    "<agent-message",
+    "[Subagent hand-back]",
+    "<local-command-caveat>",                    # local slash command echoes
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+    "<command-name>",
+    "[Usage limit reached",                      # usage-limit notices
+    "[Earlier usage-limit",
+    "Your claude.ai usage limit has reset.",
+    "This session is being continued from a previous conversation",  # compaction
+    "Stop hook feedback:",
+)
+
+# Structured markers seen on the same events in the transcript record
+# (`promptSource`, `origin.kind`). Used first when the hook payload
+# carries them; the documented UserPromptSubmit payload does not (yet),
+# hence the text fallback.
+NON_HUMAN_ORIGIN_KINDS = {"task-notification", "peer", "auto-continuation",
+                          "system", "notification"}
+HUMAN_ORIGIN_KINDS = {"human"}
+
+
+def is_non_human_prompt(data, prompt):
+    """True when this UserPromptSubmit was produced by the harness, not
+    typed by a human. Structured fields win when present; otherwise a
+    leading-text match against NON_HUMAN_PREFIXES."""
+    origin = data.get("origin")
+    kind = origin.get("kind") if isinstance(origin, dict) else None
+    source = data.get("promptSource") or data.get("prompt_source")
+    if kind in HUMAN_ORIGIN_KINDS or source == "typed":
+        return False
+    if kind in NON_HUMAN_ORIGIN_KINDS or source == "system":
+        return True
+    return prompt.startswith(NON_HUMAN_PREFIXES)
+
+
 # --- the guard --------------------------------------------------------
 
 def run_guard(data):
     if (os.environ.get("FABLE_ORCH_COLD_GUARD") or "").strip() == "0":
+        return
+
+    prompt = data.get("prompt")
+    prompt = prompt.strip() if isinstance(prompt, str) else ""
+
+    # Harness-generated submissions (task notifications, agent hand-backs,
+    # system notices) are not the human coming back: skip silently, and
+    # leave `last_prompt` alone — the Stop hook stamps `last_stop` when
+    # the turn they trigger ends.
+    if is_non_human_prompt(data, prompt):
         return
 
     session_id = data.get("session_id")
@@ -472,8 +537,6 @@ def run_guard(data):
         return  # no marker to read a baseline from, and none to invent
 
     now = time.time()
-    prompt = data.get("prompt")
-    prompt = prompt.strip() if isinstance(prompt, str) else ""
 
     # Slash commands and empty submits pass unconditionally. They still
     # stamp `last_prompt`, so a `/clear` (this hook's own advice) leaves
