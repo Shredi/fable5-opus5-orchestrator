@@ -23,9 +23,10 @@ excluded. The parent directory must be literally named `.workflow` —
 this hook does not walk upward like `find_ledger()`; a Write outside
 that directory is not a ledger write.
 
-No session marker yet (no SessionStart injection this session, or a
-manual install without the injector) -> nothing to bind onto, so this
-hook does nothing. Every other file write, and every write whose
+No session marker: a manual install (no CLAUDE_PLUGIN_ROOT) has nothing
+to bind onto, so this hook does nothing; a plugin session whose marker
+was swept gets a minimal one ({"started", "ledger"}) recreated, because
+the gates treat it as unbound and it must be able to bind again. Every other file write, and every write whose
 target is not a live ledger name, is a no-op too.
 
 Always exits 0. Every failure mode (malformed stdin, unreadable
@@ -36,6 +37,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 
 def session_marker_path(session_id):
@@ -63,8 +65,17 @@ def _is_live_ledger_name(name):
 def _bind(data):
     session_id = data.get("session_id")
     cache = session_marker_path(session_id)
-    if not cache or not os.path.isfile(cache):
-        return  # no marker to bind onto (no injection this session)
+    if not cache:
+        return
+    recreate = False
+    if not os.path.isfile(cache):
+        # Plugin session whose marker was swept (96 h SessionEnd sweep, OS
+        # temp cleanup): the gates treat it as unbound, so recreate a
+        # minimal marker or it could never bind again. Manual install
+        # (no CLAUDE_PLUGIN_ROOT): nothing to bind onto, as before.
+        if not (os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip():
+            return
+        recreate = True
 
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
@@ -94,6 +105,8 @@ def _bind(data):
         marker = {}
     if not isinstance(marker, dict):
         marker = {}
+    if recreate:
+        marker = {"started": round(time.time(), 3)}
     marker["ledger"] = real
 
     # Atomic replace: same pattern as inject_instructions.py's marker

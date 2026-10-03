@@ -45,7 +45,8 @@ ledgers sit in .workflow/: those belong to other tasks, and there is no
 adoption by discovery (03.10.2026: a fresh session adopted an ended
 session's newest open ledger at its first spawn). Continuing an
 existing ledger on purpose (resume, /clear, /spawn child) = Edit it
-once, which binds. No marker (manual install) = legacy discovery.
+once, which binds. No marker under the plugin = unbound too; only a
+manual install (no CLAUDE_PLUGIN_ROOT) or no session id = legacy discovery.
 
 Configuration (all optional):
     LEDGER_GUARD_THRESHOLD   gate in chars (default 1500; unparseable
@@ -379,13 +380,25 @@ def _session_ledger(data):
     however new or open, neither satisfies the gate nor gets adopted: a
     session without its own ledger writes a new one, or continues an
     existing one on purpose by editing it. No marker at all (manual
-    install without the injector, or before the first SessionStart fire):
-    nothing can ever bind, so legacy newest-wins discovery stays.
+    install without the injector): nothing can ever bind, so legacy
+    newest-wins discovery stays. A PLUGIN session (CLAUDE_PLUGIN_ROOT set)
+    whose marker is gone — the 96 h SessionEnd sweep or an OS temp
+    cleanup can delete a live, idle session's marker — counts as unbound,
+    not legacy: discovery there would be the removed fallback by a side
+    door. Its ledger Write/Edit recreates the marker (ledger_bind.py).
     """
     session_id = data.get("session_id")
     if _marker_dict(session_id) is not None:
         return _bound_ledger(session_id)
+    if session_id and _plugin_install():
+        return None
     return find_ledger(data.get("cwd"))
+
+
+def _plugin_install():
+    """True when this hook runs from the plugin (Claude Code exports
+    CLAUDE_PLUGIN_ROOT to plugin hooks), False for a manual install."""
+    return bool((os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip())
 
 
 def _session_started(session_id):

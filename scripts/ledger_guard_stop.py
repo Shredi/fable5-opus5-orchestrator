@@ -10,8 +10,9 @@ Blocking is SCOPED so the reminder doesn't tax every conversational turn
   1. OWNERSHIP — block only on the ledger THIS session is bound to:
      bound by writing or editing it (ledger_bind.py) — never by
      discovery or adoption, so another task's open ledger is never
-     listed. No marker (manual install, nothing can bind) = legacy
-     newest-wins discovery.
+     listed. A plugin session without a marker counts as unbound. Only a
+     manual install (no CLAUDE_PLUGIN_ROOT, nothing can bind) or a
+     payload without session id = legacy newest-wins discovery.
   2. CADENCE — once per session per ledger. A sidecar file in the
      temp dir records the ledgers this session was already held on.
 
@@ -651,9 +652,15 @@ def run_guard(data):
             if find_ledger(data.get("cwd")):
                 _metric("stop_suppressed", session_id, reason="unbound")
             return
+    elif session_id and (os.environ.get("CLAUDE_PLUGIN_ROOT") or "").strip():
+        # Plugin session whose marker is gone (96 h sweep, OS temp
+        # cleanup): unbound, never legacy discovery of someone's ledger.
+        if find_ledger(data.get("cwd")):
+            _metric("stop_suppressed", session_id, reason="no-marker")
+        return
     else:
-        # No marker at all (manual install, or before this session's
-        # first SessionStart fire): legacy, session-agnostic discovery.
+        # No marker and no plugin (manual install), or no session id:
+        # legacy, session-agnostic discovery.
         ledger = find_ledger(data.get("cwd"))
         if not ledger:
             return
