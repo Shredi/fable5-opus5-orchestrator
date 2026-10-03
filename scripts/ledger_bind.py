@@ -7,9 +7,10 @@ dimension — two parallel sessions in the same repo would step on each
 other's ledgers (session A's close held on session B's newer file, or
 worse, silenced by it). The fix threads a per-session binding through
 the injector's marker (`$TMPDIR/fable-orch-model-<sid>.json`, key
-`"ledger"`), and this hook is one of its three write points (the
-others are the spawn/task gate's adoption-on-discovery, and the
-close guard never writes it):
+`"ledger"`), and this hook is its ONLY write point (03.10.2026: the spawn/task
+gate's adoption-on-discovery was removed — it bound fresh sessions to
+other tasks' open ledgers; the close guard never writes it). Editing
+an existing ledger is therefore THE explicit way to continue it:
 
     a successful Write/Edit/MultiEdit whose target is the LIVE ledger
     in a `.workflow/` directory binds (or rebinds) this session to

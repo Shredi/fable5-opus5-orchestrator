@@ -7,4 +7,5 @@ can; security always verifies on opus). Exploration goes to sonnet
 scouts (read budget hook-enforced); always pass model: explicitly —
 built-ins inherit Fable. Every other rule from the
 already-injected core profile stays in force.
-`ledger` is on PATH; bare it uses your bound ledger (-f for another).
+`ledger` is on PATH; bare it uses your bound ledger (one you wrote/edited, never a
+fallback; -f for another).
