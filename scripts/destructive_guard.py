@@ -89,12 +89,34 @@ is in front of `/bin/rm` for that call even if the session's env file
 was not honoured. Only rm-bearing commands are rewritten, so
 `Bash(git *)`-style permission rules keep matching everything else.
 
-Always exits 0; any exception fails OPEN (a guard that crashes must
-not be a guard that blocks work). Stdlib only, Python 3.9+, no
+PowerShell / cmd.exe (a second pass, `_check_ps`, can only escalate): a
+recursive `Remove-Item` (aliases `ri rm del erase rd rmdir`; `-Recurse` or
+any prefix such as `-r`/`-rec`, parameter order free, `-Path`/`-LiteralPath`
+named or positional) or cmd `rd|rmdir|del|erase /s` (also `/s/q`), on the
+same operands as the POSIX rm rules (root, a lone backslash, drive root, home
+incl. `$env:USERPROFILE`, protected paths, variable/`%VAR%`/empty operand) ->
+DENY, outside the allowed roots -> ASK; splatted `Remove-Item @p` or a
+pipeline from a `-Recurse` listing into `Remove-Item` -> ASK;
+`Format-Volume`/`Clear-Disk`/`Remove-Partition` and cmd `format <drive>:` ->
+DENY, `diskpart` -> ASK; `pwsh|powershell -c|-Command` and `cmd /c` bodies are
+judged recursively; `-EncodedCommand`/`-ec` -> ASK; `iex`/`Invoke-Expression`
+of a downloaded string (`iwr … | iex`) -> DENY, of any other non-literal
+argument -> ASK, of a literal string -> the literal is judged; `iex` with any
+other flag (Elixir `iex -S mix`) or a non-download pipe into bare `iex` -> no
+verdict. If this pass raises, the POSIX verdict stands (fail-closed: exit 2).
+
+Default: always exits 0; any exception fails OPEN (a guard that crashes
+must not be a guard that blocks work). Opt-in: FABLE_ORCH_GUARD_FAIL_CLOSED=1
+makes malformed stdin or an internal exception exit 2 with a short stderr
+reason instead. Stdlib only, Python 3.9+, no
 shell=True, no symlinks, no fcntl — identical on macOS/Linux/Windows.
 
 Configuration:
     DESTRUCTIVE_GUARD=0       disables this guard entirely
+    FABLE_ORCH_GUARD_FAIL_CLOSED=1  malformed stdin / internal error -> exit 2
+    FABLE_ORCH_GUARD_BIN=<dir>  PATH-rewrite directory instead of
+                              $HOME/.claude/guard/bin; set but EMPTY = no
+                              PATH rewrite at all
     FABLE_ORCH_METRICS=0      disables the local metrics log
 """
 import json
@@ -107,6 +129,22 @@ import tempfile
 import time
 
 PREFIX = 'export PATH="$HOME/.claude/guard/bin:$PATH"; '
+
+
+def _prefix():
+    """The PATH rewrite for rm-bearing commands. FABLE_ORCH_GUARD_BIN unset
+    -> the default above; set to a directory -> that directory; set to an
+    empty value -> "" (no rewrite at all)."""
+    if "FABLE_ORCH_GUARD_BIN" not in os.environ:
+        return PREFIX
+    d = os.environ["FABLE_ORCH_GUARD_BIN"].strip()
+    if not d:
+        return ""
+    return 'export PATH=%s:"$PATH"; ' % shlex.quote(os.path.expanduser(d))
+
+
+def _fail_closed():
+    return (os.environ.get("FABLE_ORCH_GUARD_FAIL_CLOSED") or "").strip() == "1"
 
 # Deleting any of these recursively is never a task step; it is an
 # accident or a runaway expansion.
@@ -881,6 +919,7 @@ def _check_command(text, cwd, depth=0, cwd_unknown=False):
     if depth > MAX_DEPTH:
         return None
     worst = None
+    cwd_unknown_in = cwd_unknown
     for seg in _split_segments(text):
         worst = _worse(worst, _check_segment(seg, cwd, depth, cwd_unknown))
         for sub in _substitutions(seg):
@@ -889,6 +928,393 @@ def _check_command(text, cwd, depth=0, cwd_unknown=False):
         # Everything after a `cd` runs somewhere the payload's `cwd` does
         # not name — `cd / && rm -rf *` is the whole reason this exists.
         if not cwd_unknown and _is_cd(seg):
+            cwd_unknown = True
+    # The PowerShell pass must never cost the POSIX verdict: if it raises,
+    # keep `worst` (default) or let the error reach main() under
+    # FABLE_ORCH_GUARD_FAIL_CLOSED=1, which then refuses with exit 2.
+    try:
+        ps = _check_ps(text, cwd, depth, cwd_unknown_in)
+    except Exception:
+        if _fail_closed():
+            raise
+        ps = None
+    return _worse(worst, ps)
+
+
+# --- PowerShell / cmd.exe --------------------------------------------------
+#
+# A second, independent pass over the same text (`_check_ps`): the POSIX
+# tokenizer treats `\` as an escape, which destroys `C:\` and `\Windows`, so
+# PowerShell gets its own splitter and tokenizer (backtick escapes, no
+# backslash escapes, `''` / `""` quote doubling). The two verdicts are merged
+# with `_worse`, so this pass can only ever ESCALATE what the POSIX pass said.
+
+PS_REMOVE = frozenset(["remove-item", "ri", "rm", "del", "erase", "rd", "rmdir"])
+# ...of which these are also cmd.exe built-ins that take `/s` for "recursive".
+CMD_STYLE = frozenset(["del", "erase", "rd", "rmdir"])
+PS_DISK = frozenset(["format-volume", "clear-disk", "remove-partition"])
+PS_IEX = frozenset(["invoke-expression", "iex"])
+PS_SHELLS = frozenset(["pwsh", "powershell"])
+PS_CD = frozenset(["cd", "chdir", "sl", "set-location", "pushd", "push-location"])
+PS_DOWNLOAD_RE = re.compile(
+    r"(?i)\b(iwr|irm|curl|wget|invoke-webrequest|invoke-restmethod|"
+    r"downloadstring|downloadfile|start-bitstransfer|webclient)\b")
+# Leading statement words that stand in front of the command word.
+PS_NOISE = frozenset(["else", "try", "finally", "do", "begin", "process", "end"])
+PS_COND = frozenset(["if", "elseif", "while", "foreach", "for", "until",
+                     "switch", "catch"])
+PS_RECURSE_RE = re.compile(r"(?i)^-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?$")
+# Remove-Item (+ common) parameters: V takes a value, S is a switch.
+_PS_VALUE = ("filter", "include", "exclude", "credential", "stream",
+             "erroraction", "warningaction", "informationaction",
+             "errorvariable", "warningvariable", "informationvariable",
+             "outvariable", "outbuffer", "pipelinevariable")
+_PS_SWITCH = ("recurse", "force", "whatif", "confirm", "usetransaction",
+              "verbose", "debug")
+_PS_VALUE_ALIASES = frozenset(["ea", "wa", "infa", "ev", "wv", "iv", "ov",
+                               "ob", "pv"])
+
+
+def _ps_tokens(seg):
+    """PowerShell-ish word split: whitespace separates, `'..'` (with `''`),
+    `".."` (with backtick and `""`), a bare backtick escapes, backslash is
+    an ordinary character. Quotes are dropped; `""` survives as an empty
+    token."""
+    toks, buf, started, quote = [], [], False, None
+    i, n = 0, len(seg)
+    while i < n:
+        c = seg[i]
+        if quote:
+            if c == quote:
+                if seg[i + 1:i + 2] == quote:
+                    buf.append(c)
+                    i += 2
+                    continue
+                quote = None
+            elif c == "`" and quote == '"' and i + 1 < n:
+                buf.append(seg[i + 1])
+                i += 2
+                continue
+            else:
+                buf.append(c)
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote, started = c, True
+        elif c == "`" and i + 1 < n:
+            buf.append(seg[i + 1])
+            started = True
+            i += 2
+            continue
+        elif c.isspace():
+            if started:
+                toks.append("".join(buf))
+                buf, started = [], False
+        else:
+            buf.append(c)
+            started = True
+        i += 1
+    if started:
+        toks.append("".join(buf))
+    return toks
+
+
+def _ps_split(text):
+    """[(segment, separator_before)] split on unquoted `;`, newline, `|`,
+    `||`, `&`, `&&` with PowerShell quoting (no backslash escapes)."""
+    out, buf, quote, sep = [], [], None, ""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            buf.append(c)
+            if c == "`" and quote == '"' and i + 1 < n:
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            buf.append(c)
+        elif c == "`" and i + 1 < n:
+            buf.append(c)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        elif c in ";\n&|":
+            if "".join(buf).strip():
+                out.append(("".join(buf).strip(), sep))
+            buf = []
+            if c == "|" and text[i + 1:i + 2] != "|":
+                sep = "|"
+            else:
+                sep = c
+                if c in "&|" and text[i + 1:i + 2] == c:
+                    i += 1
+                    sep = c + c
+            if sep in (";", "\n"):
+                sep = ";"
+        else:
+            buf.append(c)
+        i += 1
+    if "".join(buf).strip():
+        out.append(("".join(buf).strip(), sep))
+    return out
+
+
+def _ps_strip_statement(seg):
+    """Drop `&`, `{`, `(`, `}` and statement heads (`if (...)`, `foreach
+    (...)`, `else`, `try`...) in front of the command word."""
+    s = seg
+    while True:
+        t = s.lstrip(" \t&{(}")
+        fe = re.match(r"(?i)(?:%|foreach-object|foreach|\?|where-object|where)\s*(?=\{)", t)
+        m = re.match(r"(?i)(\w+)\s*(\()?", t)
+        if fe:
+            # `% { Remove-Item $_ -Recurse }`: judge the script block.
+            t = t[fe.end():]
+        elif m and m.group(1).lower() in PS_COND and m.group(2):
+            depth, j = 0, m.end() - 1
+            while j < len(t):
+                depth += (t[j] == "(") - (t[j] == ")")
+                j += 1
+                if depth == 0:
+                    break
+            t = t[j:]
+        elif m and m.group(1).lower() in PS_NOISE and \
+                (len(t) == m.end(1) or not (t[m.end(1)].isalnum() or t[m.end(1)] in "-_.")):
+            t = t[m.end(1):]
+        else:
+            return t
+        s = t
+
+
+def _ps_command_tokens(seg):
+    toks = _ps_tokens(_ps_strip_statement(seg))
+    out = []
+    for t in toks:
+        closes = "}" in t
+        if closes:
+            t = t.replace("}", "")
+        if t.endswith(")") and t.count(")") > t.count("("):
+            t = t.rstrip(")")
+        if t or not closes:
+            out.append(t)
+        if closes:
+            break
+    toks, _ = _strip_wrappers(out)
+    return toks
+
+
+def _ps_param_kind(name):
+    """'path' | 'value' | 'switch' for a (lower-case, colon-less) Remove-Item
+    parameter name or any unambiguous prefix of it."""
+    if not name:
+        return "switch"
+    if "path".startswith(name) or "literalpath".startswith(name) \
+            or name in ("lp", "pspath"):
+        return "path"
+    if name in _PS_VALUE_ALIASES:
+        return "value"
+    cands = [c for c in _PS_VALUE + _PS_SWITCH if c.startswith(name)]
+    if cands and all(c in _PS_VALUE for c in cands):
+        return "value"
+    return "switch"
+
+
+def _ps_operand_verdict(op, cwd, cwd_unknown):
+    o = re.sub(r"(?i)^(?:[\w.]+\\)?filesystem::", "", op)
+    if o.startswith("\\\\?\\"):
+        o = o[4:]
+    if re.search(r"%[^%\s]+%", o):
+        return ("deny", "variable-operand")
+    n = o.replace("\\", "/")
+    if o.startswith("\\") and not o.startswith("\\\\"):
+        n = "C:" + n  # `\` / `\Windows`: root of the current drive
+    return _operand_verdict(n, cwd, cwd_unknown)
+
+
+_CMD_SWITCHES_RE = re.compile(r"(?i)^(?:/[a-z?](?::[^/\s]*)?)+$")
+
+
+def _check_ps_remove(name, toks, sep, pipe, cwd, cwd_unknown):
+    recursive, paths, i = False, [], 1
+    cmd_style = name in CMD_STYLE
+    ps_only = name in ("remove-item", "ri")
+    while i < len(toks):
+        t = toks[i]
+        i += 1
+        if ps_only and len(t) > 1 and t[0] == "@" and \
+                re.match(r"^@\w+$", t):
+            # Splatting hides -Recurse and -Path in a hashtable.
+            return ("ask", "ps-remove-splat")
+        if t.startswith("-") and len(t) > 1 and t[1] != "-":
+            pname, colon, val = t[1:].partition(":")
+            if PS_RECURSE_RE.match("-" + pname):
+                recursive = val.lower() not in ("$false", "0")
+                continue
+            kind = _ps_param_kind(pname.lower())
+            if kind == "path":
+                if colon:
+                    paths.append(val)
+                elif i < len(toks):
+                    paths.append(toks[i])
+                    i += 1
+            elif kind == "value" and not colon:
+                i += 1
+            continue
+        if cmd_style and _CMD_SWITCHES_RE.match(t):
+            # `/s`, and switches written together: `/s/q`, `/Q/S`.
+            if "s" in re.findall(r"(?i)/([a-z?])", t.lower()):
+                recursive = True
+            continue
+        paths.append(t)
+    if not recursive:
+        if not paths and sep == "|" and pipe["recurse"] and name != "rm":
+            # `gci C:\ -Recurse | ri -Force`: the left side hands it a tree.
+            return ("ask", "ps-remove-pipeline-recurse")
+        return None
+    ops = []
+    for p in paths:
+        parts = [x for x in p.split(",") if x] if "," in p else [p]
+        ops.extend(parts or [p])
+    if not ops:
+        if name in ("remove-item", "ri") or (sep == "|" and name != "rm"):
+            return ("ask", "ps-remove-pipeline-recurse")
+        return None
+    worst = None
+    for op in ops:
+        v = _ps_operand_verdict(op, cwd, cwd_unknown)
+        worst = _worse(worst, (v[0], "ps-" + v[1]) if v else None)
+    return worst
+
+
+def _ps_shell_bodies(toks):
+    """Command bodies (and flags) of `pwsh|powershell ... -c <body>` and
+    `cmd /c <body>`: (kind, body) pairs."""
+    name = _base(toks[0]).lower()
+    res = []
+    for i, t in enumerate(toks[1:], 1):
+        low = t.lower()
+        if name == "cmd":
+            if low in ("/c", "/k", "/r"):
+                rest = toks[i + 1:]
+                body = rest[0] if len(rest) == 1 else " ".join(
+                    ('"%s"' % r if " " in r else r) for r in rest)
+                res.append(("body", body))
+                break
+            continue
+        if not low.startswith("-") or len(low) < 2:
+            continue
+        pname = low[1:].split(":")[0]
+        if "encodedcommand".startswith(pname) or pname == "ec":
+            res.append(("encoded", ""))
+            break
+        if "command".startswith(pname):
+            rest = toks[i + 1:]
+            body = rest[0] if len(rest) == 1 else " ".join(rest)
+            if body.strip() not in ("", "-"):
+                res.append(("body", body))
+            break
+    return res
+
+
+_LIT_SINGLE = re.compile(r"^'((?:[^']|'')*)'$", re.S)
+_LIT_DOUBLE = re.compile(r'^"([^"`$]*)"$', re.S)
+
+
+def _check_ps_iex(seg, pipe, cwd, depth, cwd_unknown):
+    m = re.search(r"(?i)(?:^|[\s({&;])(?:invoke-expression|iex)\b(.*)$", seg, re.S)
+    args = m.group(1).strip() if m else ""
+    if args.startswith("-"):
+        # Only `-Command` (or a prefix) is an Invoke-Expression parameter;
+        # any other flag (`iex -S mix`, `iex --remsh`, `iex -h`) is the
+        # Elixir shell or similar, not PowerShell: no verdict.
+        flag, _, rest = args.partition(" ")
+        pname = flag[1:].split(":")[0].lower()
+        if not pname or not "command".startswith(pname):
+            # ...but a common parameter (`-Verbose`, `-ea 0`) still runs a
+            # downloaded string: deny that before giving no verdict.
+            if pipe["download"] or PS_DOWNLOAD_RE.search(args):
+                return ("deny", "ps-download-and-execute")
+            return None
+        args = rest.strip()
+    if not args:
+        # A pipeline into bare `iex`: deny only when a download fed it.
+        if pipe["download"]:
+            return ("deny", "ps-download-and-execute")
+        return None
+    lit = _LIT_SINGLE.match(args)
+    body = lit.group(1).replace("''", "'") if lit else None
+    if body is None:
+        lit = _LIT_DOUBLE.match(args)
+        body = lit.group(1) if lit else None
+    if body is not None:
+        return _check_command(body, cwd, depth + 1, cwd_unknown)
+    if PS_DOWNLOAD_RE.search(args) or pipe["download"]:
+        return ("deny", "ps-download-and-execute")
+    return ("ask", "ps-iex-non-literal")
+
+
+def _check_ps_segment(seg, sep, pipe, cwd, depth, cwd_unknown):
+    toks = _ps_command_tokens(seg)
+    if not toks:
+        return None
+    name = _base(toks[0]).lower()
+    if name in PS_DISK:
+        return ("deny", "ps-disk-destroy")
+    if name in ("format", "format.com"):
+        # cmd `format D:` formats a volume; only a drive-letter operand
+        # counts, so `format` as anything else is left alone.
+        if any(re.match(r"^[A-Za-z]:[\\/]?$", t) for t in toks[1:]):
+            return ("deny", "ps-format-drive")
+        return None
+    if name in ("diskpart", "diskpart.exe"):
+        return ("ask", "ps-diskpart")
+    if name in PS_IEX:
+        return _check_ps_iex(seg, pipe, cwd, depth, cwd_unknown)
+    if name in PS_REMOVE:
+        return _check_ps_remove(name, toks, sep, pipe, cwd, cwd_unknown)
+    if name in PS_SHELLS or name == "cmd":
+        worst, seen = None, set()
+        for variant in (toks, _strip_wrappers(_tokens(_ps_strip_statement(seg)))[0]):
+            if not variant or _base(variant[0]).lower() != name:
+                continue
+            for kind, body in _ps_shell_bodies(variant):
+                if (kind, body) in seen:
+                    continue
+                seen.add((kind, body))
+                if kind == "encoded":
+                    worst = _worse(worst, ("ask", "ps-encoded-command"))
+                else:
+                    worst = _worse(worst, _check_command(body, cwd, depth + 1,
+                                                         cwd_unknown))
+        return worst
+    return None
+
+
+def _check_ps(text, cwd, depth, cwd_unknown=False):
+    if depth > MAX_DEPTH:
+        return None
+    # Pipe-run state is kept as running flags (not a re-scanned chain
+    # string), so a long `| iex | iex ...` line stays linear.
+    worst, pipe = None, {"download": False, "recurse": False}
+    for seg, sep in _ps_split(text):
+        if sep != "|":
+            pipe = {"download": False, "recurse": False}
+        worst = _worse(worst, _check_ps_segment(seg, sep, pipe, cwd, depth,
+                                                cwd_unknown))
+        toks = _ps_command_tokens(seg)
+        if PS_DOWNLOAD_RE.search(seg):
+            pipe["download"] = True
+        if any(PS_RECURSE_RE.match(t.partition(":")[0])
+               and t.partition(":")[2].lower() not in ("$false", "0")
+               for t in toks[1:]):
+            pipe["recurse"] = True
+        if toks and _base(toks[0]).lower() in PS_CD:
             cwd_unknown = True
     return worst
 
@@ -974,6 +1400,38 @@ REASONS = {
 }
 
 
+for _k in ("empty-operand", "variable-operand", "home-or-root", "protected-path",
+           "glob-in-protected-dir", "outside-allowed-roots", "glob-outside-roots",
+           "recursive-rm-in-unknown-cwd", "relative-path-in-unknown-cwd"):
+    REASONS["ps-" + _k] = REASONS[_k].replace(
+        "a recursive `rm`",
+        "a recursive PowerShell/cmd delete (`Remove-Item -Recurse`, `rd /s`, `del /s`)")
+REASONS.update({
+    "ps-disk-destroy":
+        "`Format-Volume` / `Clear-Disk` / `Remove-Partition`, which destroy a "
+        "volume, disk or partition",
+    "ps-download-and-execute":
+        "`Invoke-Expression`/`iex` of a downloaded string (`iwr … | iex`) — "
+        "code nobody has read runs with your rights",
+    "ps-iex-non-literal":
+        "`Invoke-Expression`/`iex` of a string that is not a literal, so what "
+        "runs is unknown here",
+    "ps-format-drive":
+        "cmd `format <drive>:`, which formats a whole volume",
+    "ps-diskpart":
+        "`diskpart`, which can clean, delete or format disks and partitions",
+    "ps-remove-splat":
+        "a `Remove-Item` with splatted parameters (`@p`), which can hide "
+        "`-Recurse` and the path",
+    "ps-encoded-command":
+        "`pwsh|powershell -EncodedCommand`, a base64 payload this guard "
+        "cannot read",
+    "ps-remove-pipeline-recurse":
+        "a recursive `Remove-Item` with no path operand (it deletes whatever "
+        "the pipeline hands it)",
+})
+
+
 def _deny_reason(kind):
     what = REASONS.get(kind, "a destructive command shape (%s)" % kind)
     return ("DESTRUCTIVE GUARD: refusing " + what + ". Rewrite it with a "
@@ -1032,25 +1490,38 @@ def _guard(data):
 
     # Layer B in front of /bin/rm for this call — only for commands that
     # actually mention `rm`, so allow-rules on other tools keep matching.
-    if not command.startswith(PREFIX) and _invokes_rm(command):
+    prefix = _prefix()
+    if prefix and not command.startswith(prefix) and _invokes_rm(command):
         updated = dict(tool_input)
-        updated["command"] = PREFIX + command
+        updated["command"] = prefix + command
         out["updatedInput"] = updated
 
     if len(out) > 1:
         print(json.dumps({"hookSpecificOutput": out}))
 
 
+def _refuse(why):
+    sys.stderr.write("DESTRUCTIVE GUARD: fail-closed, refusing: %s. "
+                     "Unset FABLE_ORCH_GUARD_FAIL_CLOSED to fail open.\n" % why)
+    sys.exit(2)
+
+
 def main():
     try:
         data = json.load(sys.stdin)
     except Exception:
+        if _fail_closed():
+            _refuse("malformed hook input")
         return  # malformed input -> never block
     if not isinstance(data, dict):
+        if _fail_closed():
+            _refuse("hook input is not a JSON object")
         return
     try:
         _guard(data)
-    except Exception:
+    except Exception as exc:
+        if _fail_closed():
+            _refuse("internal error (%s)" % type(exc).__name__)
         return  # fail open; this hook never crashes the pipeline
 
 
