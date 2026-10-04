@@ -1236,6 +1236,10 @@ def _check_ps_iex(seg, pipe, cwd, depth, cwd_unknown):
         flag, _, rest = args.partition(" ")
         pname = flag[1:].split(":")[0].lower()
         if not pname or not "command".startswith(pname):
+            # ...but a common parameter (`-Verbose`, `-ea 0`) still runs a
+            # downloaded string: deny that before giving no verdict.
+            if pipe["download"] or PS_DOWNLOAD_RE.search(args):
+                return ("deny", "ps-download-and-execute")
             return None
         args = rest.strip()
     if not args:
