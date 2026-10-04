@@ -401,6 +401,8 @@ Set these in `~/.claude/settings.json` under `"env"`.
 │ LEDGER_GUARD_STOP_MODE        │ once-per-session │ every-turn restores per-turn blocking      │
 │ LEDGER_WRITE_GUARD            │ (on)             │ 0 disables the ledger overwrite guard      │
 │ DESTRUCTIVE_GUARD             │ (on)             │ 0 disables the rm guard AND its shim       │
+│ FABLE_ORCH_GUARD_FAIL_CLOSED  │ (off)            │ 1 = bad stdin/crash exits 2, not allow     │
+│ FABLE_ORCH_GUARD_BIN          │ (default dir)    │ PATH-rewrite dir; empty = no rewrite       │
 │ SAFE_RM_DRYRUN                │ (off)            │ 1 makes the shim print a verdict, not run  │
 │ FABLE_ORCH_METRICS            │ (on)             │ 0 disables local metrics logging           │
 │ FABLE_ORCH_METRICS_DIR        │ see Metrics      │ directory of metrics.jsonl (+ stats.py)    │
