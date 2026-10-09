@@ -147,6 +147,9 @@ spawn (Agent / Task / Workflow)
        ├─ ACTIVE .workflow/LEDGER*.md found ....... PASS  (cite its items per agent)
        │  (cwd → repo root / $HOME)
        │
+       ├─ permission_mode == "plan" ............... PASS  + stderr notice (plan mode
+       │                                                can't write a ledger; 0.23.1)
+       │
        └─ no ledger — or only a stale one ......... DENY  → "write the ledger first;
                                                      small single-phase → do directly"
 ```

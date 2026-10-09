@@ -1,6 +1,8 @@
 import json
 import time
 
+import pytest
+
 from conftest import POSIX, run_hook, write_ledger, write_marker
 
 SCRIPT = "ledger_guard_spawn.py"
@@ -426,3 +428,82 @@ def test_task_metrics_and_stats_summary(repo_dir, tmp_path):
     )
     assert stats.returncode == 0, stats.stderr
     assert "solo multi-phase nudges: 1 denied" in stats.stdout
+
+
+# --- plan mode: a session that cannot write a ledger is not dead-ended ---
+
+PLAN_NOTICE = ("ledger guard: plan mode, no ledger required for research "
+               "spawns — write the ledger after ExitPlanMode")
+
+
+def _run_with_stderr(payload, tmpdir):
+    """Like run_hook, but also returns stderr (the plan-mode notice)."""
+    import os
+    import subprocess
+    import sys
+    from conftest import SCRIPTS, STRIP_ENV
+    env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    env.update({"FABLE_ORCH_METRICS": "0", "FABLE_ORCH_SWARM_CLEANUP": "0",
+                "CLAUDE_CONFIG_DIR": str(tmpdir / "cfg"),
+                "TMPDIR": str(tmpdir), "TEMP": str(tmpdir), "TMP": str(tmpdir),
+                "CLAUDE_PLUGIN_ROOT": str(SCRIPTS.parent)})
+    proc = subprocess.run([sys.executable, str(SCRIPTS / SCRIPT)],
+                          input=json.dumps(payload), capture_output=True,
+                          text=True, env=env, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout.strip()
+    return (json.loads(out) if out else None), proc.stderr
+
+
+def test_plan_mode_allows_long_spawn_without_ledger(repo_dir, tmp_path):
+    # Plugin session, marker present, no bound ledger: default mode denies,
+    # plan mode passes with a one-line stderr notice.
+    write_marker(tmp_path, time.time())
+    result, err = _run_with_stderr(
+        spawn_payload(repo_dir, permission_mode="plan"), tmp_path)
+    assert result is None
+    assert err.strip() == PLAN_NOTICE
+
+
+def test_plan_mode_allows_long_workflow_script(repo_dir, tmp_path):
+    write_marker(tmp_path, time.time())
+    payload = spawn_payload(repo_dir, tool="Workflow", permission_mode="plan",
+                            tool_input={"script": VERY_LONG})
+    result, err = _run_with_stderr(payload, tmp_path)
+    assert result is None and PLAN_NOTICE in err
+
+
+@pytest.mark.parametrize("mode", ["default", "acceptEdits", "auto",
+                                  "dontAsk", "bypassPermissions", None])
+def test_other_modes_still_deny_long_spawn_without_ledger(repo_dir, tmp_path, mode):
+    write_marker(tmp_path, time.time())
+    extra = {} if mode is None else {"permission_mode": mode}
+    result, err = _run_with_stderr(spawn_payload(repo_dir, **extra), tmp_path)
+    assert is_deny(result)
+    assert PLAN_NOTICE not in err
+
+
+def test_plan_mode_with_bound_ledger_unchanged(repo_dir, tmp_path):
+    live = _write_named_ledger(repo_dir, "LEDGER-plan.md", "- [ ] 1. open\n")
+    write_marker(tmp_path, time.time(), ledger=live)
+    result, err = _run_with_stderr(
+        spawn_payload(repo_dir, prompt=VERY_LONG, permission_mode="plan"), tmp_path)
+    assert result is None
+    assert PLAN_NOTICE not in err
+
+
+def test_plan_mode_short_prompt_has_no_notice(repo_dir, tmp_path):
+    write_marker(tmp_path, time.time())
+    result, err = _run_with_stderr(
+        spawn_payload(repo_dir, prompt="find x", permission_mode="plan"), tmp_path)
+    assert result is None and err.strip() == ""
+
+
+def test_plan_mode_does_not_lift_task_gate(repo_dir, tmp_path):
+    # Scope: the exemption is for spawns only; the TaskCreate gate is unchanged.
+    results = []
+    for _ in range(3):
+        p = task_payload(repo_dir)
+        p["permission_mode"] = "plan"
+        results.append(run_hook(SCRIPT, p, tmpdir=tmp_path))
+    assert results[0] is None and results[1] is None and is_deny(results[2])

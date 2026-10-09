@@ -24,6 +24,11 @@ Exempt:
     fork subagents (subagent_type == "fork") — a fork inherits the
     full conversation context, so the ledger is already in front
     of it; forcing a file adds nothing.
+    plan mode (hook input permission_mode == "plan") — plan mode
+    lets the session write only the plan file, so it cannot write a
+    ledger; an over-threshold spawn passes with a one-line stderr
+    notice instead of the deny. Spawn gate only: the TaskCreate gate
+    and every other permission mode are unchanged.
 
 The threshold defaults to 1500 chars — strict on purpose. This
 plugin is built for a premium chair (Fable, or Opus under either
@@ -482,6 +487,19 @@ def _guard(data):
         _metric("spawn_pass_over_threshold", session_id,
                 chars=len(text), threshold=limit,
                 tool=data.get("tool_name") or "")
+        return
+
+    # Plan mode allows only the plan file to be written, so a plan-mode
+    # session can never Write/Edit a ledger and the deny below would be a
+    # dead end for its research spawns (09.10.2026: three Explore spawns
+    # denied). Pass with a notice; the ledger follows after ExitPlanMode.
+    if str(data.get("permission_mode") or "").strip() == "plan":
+        _metric("spawn_pass_plan_mode", session_id,
+                chars=len(text), threshold=limit,
+                tool=data.get("tool_name") or "", stale=stale)
+        print("ledger guard: plan mode, no ledger required for research "
+              "spawns — write the ledger after ExitPlanMode",
+              file=sys.stderr)
         return
 
     _metric("spawn_deny", session_id,
