@@ -256,6 +256,8 @@ Nothing restarts in that scenario: the tab stays open across sleep, the session 
 prompt submitted
   │
   ├─ harness-generated (task notification, agent hand-back, notice) SKIP  (silent, no stamp)
+  ├─ scheduled wakeup (/loop, ScheduleWakeup, cron; 0.23.2) ....... SKIP  (prompt = a Stop-hook
+  │                                      session_crons entry, or the "[N prior /loop wakeup" frame)
   ├─ starts with "/" · empty · teammate · FABLE_ORCH_COLD_GUARD=0 ... PASS  (unconditional)
   ├─ idle gap < FABLE_ORCH_COLD_MIN (55 min) ........................ PASS  (cache still warm)
   ├─ no session marker, or no usage in the transcript ............... PASS  (fail open)

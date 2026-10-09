@@ -201,13 +201,13 @@ def _read_marker(cache):
 # Keys in the marker that belong to OTHER hooks and that this rewrite
 # must carry forward untouched. The cold-cache guard's activity stamps
 # live here: `last_stop` (written by the Stop hook), `last_prompt`
-# (written by the guard itself), and the `cold_ack`/`cold_ctx` pair of an
-# outstanding block. SessionStart re-fires on resume/clear/compact and
+# (written by the guard itself), the `cold_ack`/`cold_ctx` pair of an
+# outstanding block, and `wake_prompts` (pending /loop wakeups, Stop hook). SessionStart re-fires on resume/clear/compact and
 # rebuilds this file from a whitelist, so a key not named here is
 # silently dropped — which for the stamps meant that a `claude --resume`
 # of yesterday's 400k-token session lost its idle baseline and sailed
 # through the guard on exactly the message the guard exists for.
-CARRIED_KEYS = ("last_stop", "last_prompt", "cold_ack", "cold_ctx")
+CARRIED_KEYS = ("last_stop", "last_prompt", "cold_ack", "cold_ctx", "wake_prompts")
 
 
 def _carried(cache):

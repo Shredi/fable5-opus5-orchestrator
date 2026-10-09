@@ -705,3 +705,80 @@ def test_structured_human_origin_overrides_text_match(tmp_path):
     assert blocks(run_hook(SCRIPT, prompt_payload(
         tmp_path, "<task-notification> pasted by hand", transcript,
         promptSource="typed", origin={"kind": "human"}), tmpdir=tmp_path))
+
+
+# --- scheduled wakeups (/loop, ScheduleWakeup) are skipped -----------
+
+LOOP_PROMPT = ("Live-scan tick (ledger item 7, LEDGER-x.md). Scan the sources, "
+               "then ScheduleWakeup again.")
+
+
+def test_stop_hook_mirrors_session_crons_into_wake_prompts(repo_dir, tmp_path):
+    marker = cold_marker(tmp_path)
+    crons = [{"id": "7a8ad35c", "schedule": "38 15 * * *", "recurring": False,
+              "prompt": LOOP_PROMPT}]
+    run_hook("ledger_guard_stop.py", {"cwd": str(repo_dir), "session_id": SESSION,
+                                      "session_crons": crons}, tmpdir=tmp_path)
+    assert marker_body(marker)["wake_prompts"] == [LOOP_PROMPT]
+    # loop ended -> empty list clears it; field absent (older CC) -> untouched
+    run_hook("ledger_guard_stop.py", {"cwd": str(repo_dir), "session_id": SESSION,
+                                      "session_crons": []}, tmpdir=tmp_path)
+    assert marker_body(marker)["wake_prompts"] == []
+    body = marker_body(marker)
+    body["wake_prompts"] = [LOOP_PROMPT]
+    marker.write_text(json.dumps(body), encoding="utf-8")
+    run_hook("ledger_guard_stop.py", {"cwd": str(repo_dir), "session_id": SESSION},
+             tmpdir=tmp_path)
+    assert marker_body(marker)["wake_prompts"] == [LOOP_PROMPT]
+
+
+def test_loop_wakeup_is_never_blocked_when_cold_and_huge(tmp_path):
+    marker = cold_marker(tmp_path, wake_prompts=[LOOP_PROMPT])
+    before = marker_body(marker)
+    transcript = write_transcript(tmp_path, 800000)
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, LOOP_PROMPT, transcript),
+                    tmpdir=tmp_path) is None
+    assert marker_body(marker) == before  # no ack armed, no stamp
+
+
+def test_loop_wakeup_is_not_warned_either(tmp_path):
+    cold_marker(tmp_path, wake_prompts=[LOOP_PROMPT])
+    transcript = write_transcript(tmp_path, 80000)  # warn band
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, LOOP_PROMPT, transcript),
+                    tmpdir=tmp_path) is None
+
+
+def test_clipped_wake_prompt_matches_by_prefix(tmp_path):
+    long_prompt = "Live-scan tick " + "x" * 1200
+    clipped = long_prompt[:1000] + "… [+215 chars]"
+    cold_marker(tmp_path, wake_prompts=[clipped])
+    transcript = write_transcript(tmp_path, 800000)
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, long_prompt, transcript),
+                    tmpdir=tmp_path) is None
+
+
+def test_loop_frame_line_is_skipped_without_a_recorded_cron(tmp_path):
+    cold_marker(tmp_path)
+    transcript = write_transcript(tmp_path, 800000)
+    prompt = "[3 prior /loop wakeups found nothing actionable; loop is healthy.]\n" + LOOP_PROMPT
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, prompt, transcript),
+                    tmpdir=tmp_path) is None
+
+
+def test_human_prompt_is_still_blocked_while_a_loop_is_pending(tmp_path):
+    cold_marker(tmp_path, wake_prompts=[LOOP_PROMPT])
+    transcript = write_transcript(tmp_path, 800000)
+    for prompt in ("new result 53 offer 480", LOOP_PROMPT + " and also check X",
+                   "<pasted_content>\n" + LOOP_PROMPT):
+        cold_marker(tmp_path, wake_prompts=[LOOP_PROMPT])
+        assert blocks(run_hook(SCRIPT, prompt_payload(tmp_path, prompt, transcript),
+                               tmpdir=tmp_path)), prompt[:30]
+
+
+def test_session_start_carries_wake_prompts():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "inject_instructions", os.path.join(REPO, "scripts", "inject_instructions.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert "wake_prompts" in mod.CARRIED_KEYS

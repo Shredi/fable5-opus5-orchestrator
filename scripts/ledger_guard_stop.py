@@ -117,7 +117,28 @@ def _write_marker_dict(session_id, marker):
         pass
 
 
-def stamp_last_stop(session_id):
+# Cap on the session_crons prompts mirrored into the marker. A session
+# rarely holds more than one or two; the cap only bounds a runaway list.
+WAKE_PROMPTS_MAX = 20
+
+
+def _wake_prompts(crons):
+    """The prompt texts of this session's pending scheduled wakeups
+    (/loop, ScheduleWakeup, CronCreate), from the Stop payload's
+    `session_crons`, or None when the payload has no such field (older
+    Claude Code) — None means "leave the marker's list alone"."""
+    if not isinstance(crons, list):
+        return None
+    out = []
+    for cron in crons:
+        if isinstance(cron, dict) and isinstance(cron.get("prompt"), str):
+            text = cron["prompt"].strip()
+            if text and text not in out:
+                out.append(text)
+    return out[:WAKE_PROMPTS_MAX]
+
+
+def stamp_last_stop(session_id, crons=None):
     """Record this turn-end in the session marker for the cold-cache guard.
 
     That guard (UserPromptSubmit) needs to know when the session was last
@@ -135,6 +156,15 @@ def stamp_last_stop(session_id):
     if marker is None:
         return
     marker["last_stop"] = round(time.time(), 3)
+    # The cold-cache guard skips a prompt that IS one of these: the
+    # UserPromptSubmit payload of a /loop / ScheduleWakeup fire carries no
+    # origin marker (live probe 09.10.2026, CC 2.1.295), but the Stop
+    # payload lists every pending wakeup with the exact text it will
+    # submit. Written here, in the one hook that already rewrites the
+    # marker at turn end, so two Stop hooks never race on the file.
+    wakes = _wake_prompts(crons)
+    if wakes is not None:
+        marker["wake_prompts"] = wakes
     _write_marker_dict(session_id, marker)
 
 
@@ -534,7 +564,8 @@ def main():
             pass
         # Same reason: this rewrites the marker (and so its mtime).
         try:
-            stamp_last_stop((data or {}).get("session_id"))
+            stamp_last_stop((data or {}).get("session_id"),
+                            (data or {}).get("session_crons"))
         except Exception:
             pass
         try:

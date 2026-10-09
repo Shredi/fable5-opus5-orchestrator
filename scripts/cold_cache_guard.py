@@ -45,7 +45,10 @@ ALWAYS PASSES, no matter how cold or how large:
 
 SKIPPED SILENTLY (no output, no marker write): submissions the harness
 makes on its own — background task notifications, subagent hand-backs /
-peer messages, local-command echoes, usage-limit and compaction notices.
+peer messages, local-command echoes, usage-limit and compaction notices,
+and scheduled wakeups (/loop, ScheduleWakeup, CronCreate; matched against
+the `wake_prompts` the Stop hook copies from `session_crons`, see
+`is_scheduled_wakeup`).
 Claude Code routes them through UserPromptSubmit like a typed prompt,
 but no human is waiting on them, so a block would eat a worker's report
 and a warning would nag about a cost nobody chose. See
@@ -516,6 +519,48 @@ def is_non_human_prompt(data, prompt):
     return prompt.startswith(NON_HUMAN_PREFIXES)
 
 
+# --- scheduled wakeups (/loop, ScheduleWakeup, CronCreate) ------------
+
+# The harness's own frame line for a self-paced /loop tick that follows
+# no-op ticks ("[1 prior /loop wakeup found nothing actionable; loop is
+# healthy.]"). Normally a separate meta message, but matched as a lead
+# in case a version folds it into the submitted prompt.
+_LOOP_FRAME_RE = re.compile(r"^\[\d+ prior /loop wakeups? found nothing actionable")
+# session_crons clips a prompt at 1000 chars and appends this marker.
+_CLIP_RE = re.compile(r"\s*\u2026 \[\+\d+ chars\]$")
+
+
+def is_scheduled_wakeup(marker, prompt):
+    """True when `prompt` is a scheduled wakeup firing, not a human.
+
+    The UserPromptSubmit payload of a wakeup carries no origin field and
+    the transcript's `scheduled_task_fire` record is not on disk yet when
+    the hook runs (both live-probed 09.10.2026, CC 2.1.295). What IS
+    reliable: the previous turn's Stop payload listed every pending
+    wakeup in `session_crons` with the exact prompt it submits, and the
+    Stop hook mirrored those into the marker as `wake_prompts`. A wakeup
+    prompt equals one of them (or starts with a clipped one). Blocking
+    one would kill the loop outright — the blocked turn never runs, so
+    it never schedules the next wakeup (09.10.: two ticks eaten)."""
+    if _LOOP_FRAME_RE.match(prompt):
+        return True
+    wakes = (marker or {}).get("wake_prompts")
+    if not isinstance(wakes, list):
+        return False
+    for wake in wakes:
+        if not isinstance(wake, str) or not wake.strip():
+            continue
+        wake = wake.strip()
+        clipped = _CLIP_RE.search(wake)
+        if clipped:
+            head = wake[:clipped.start()].rstrip()
+            if head and prompt.startswith(head):
+                return True
+        elif prompt == wake:
+            return True
+    return False
+
+
 # --- the guard --------------------------------------------------------
 
 def run_guard(data):
@@ -538,6 +583,12 @@ def run_guard(data):
         return  # no marker to read a baseline from, and none to invent
 
     now = time.time()
+
+    # A /loop or ScheduleWakeup tick: nobody is waiting at the keyboard,
+    # and a block would end the loop. Skip like any harness submission;
+    # the turn's Stop hook stamps `last_stop`.
+    if is_scheduled_wakeup(marker, prompt):
+        return
 
     # Slash commands and empty submits pass unconditionally. They still
     # stamp `last_prompt`, so a `/clear` (this hook's own advice) leaves
