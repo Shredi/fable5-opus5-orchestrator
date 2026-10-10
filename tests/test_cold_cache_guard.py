@@ -782,3 +782,59 @@ def test_session_start_carries_wake_prompts():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert "wake_prompts" in mod.CARRIED_KEYS
+
+
+# --- cross-session deliveries (SendMessage between sessions) are skipped
+
+CROSS_SESSION_PROMPTS = [
+    ('<cross-session-message from="uds:/tmp/cc-socks/abc.sock" '
+     'from-name="paperless docs" from-mode="prompting">\nBrief: item 42 ...\n'
+     '</cross-session-message>'),
+    "[Cross-session idle notice] The session you subscribed to is idle.",
+    "[Cross-session delivery notice] Your message was delivered.",
+]
+
+
+def test_cross_session_message_is_never_blocked_when_cold_and_huge(tmp_path):
+    transcript = write_transcript(tmp_path, 800000)
+    prompt = CROSS_SESSION_PROMPTS[0]
+    marker = cold_marker(tmp_path)
+    before = marker_body(marker)
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, prompt, transcript),
+                    tmpdir=tmp_path) is None
+    assert marker_body(marker) == before  # no ack armed, no stamp
+
+
+def test_cross_session_idle_notice_is_never_blocked(tmp_path):
+    transcript = write_transcript(tmp_path, 800000)
+    marker = cold_marker(tmp_path)
+    before = marker_body(marker)
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, CROSS_SESSION_PROMPTS[1],
+                                           transcript), tmpdir=tmp_path) is None
+    assert marker_body(marker) == before
+
+
+def test_cross_session_delivery_notice_is_never_blocked(tmp_path):
+    transcript = write_transcript(tmp_path, 800000)
+    marker = cold_marker(tmp_path)
+    before = marker_body(marker)
+    assert run_hook(SCRIPT, prompt_payload(tmp_path, CROSS_SESSION_PROMPTS[2],
+                                           transcript), tmpdir=tmp_path) is None
+    assert marker_body(marker) == before
+
+
+def test_cross_session_frames_are_not_warned_either(tmp_path):
+    transcript = write_transcript(tmp_path, 80000)  # warn band
+    for prompt in CROSS_SESSION_PROMPTS:
+        cold_marker(tmp_path)
+        assert run_hook(SCRIPT, prompt_payload(tmp_path, prompt, transcript),
+                        tmpdir=tmp_path) is None, prompt[:30]
+
+
+def test_human_prompt_mentioning_cross_session_frame_still_blocked(tmp_path):
+    transcript = write_transcript(tmp_path, 800000)
+    for prompt in ("why was the <cross-session-message> dropped?",
+                   "see [Cross-session idle notice] above"):
+        cold_marker(tmp_path)
+        assert blocks(run_hook(SCRIPT, prompt_payload(tmp_path, prompt, transcript),
+                               tmpdir=tmp_path)), prompt[:30]

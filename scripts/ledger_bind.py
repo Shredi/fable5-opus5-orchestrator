@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""PostToolUse hook (Write|Edit|MultiEdit): bind this session to the ledger it writes.
+"""PostToolUse hook (Write|Edit|MultiEdit|Bash): bind this session to the ledger it writes.
+
+Since 0.23.3 a chair's `ledger mark|note|add|defer -f PATH` (the plugin's
+ledger CLI, run through Bash) binds exactly like an Edit of PATH: naming
+the file explicitly is the same deliberate act (10.10.2026: a chair
+used `ledger -f` all day and stayed unbound). A bare `ledger <write>`
+names no file — it resolves through an existing binding, so it is a
+no-op here. Read-only `ledger status` never binds.
 
 D1 (per-session ledger binding): the spawn/task/close guards used to
 discover the "active" ledger by newest-mtime alone, with no session
@@ -40,6 +47,7 @@ this hook must never block or fail a Write/Edit/MultiEdit.
 """
 import json
 import os
+import shlex
 import sys
 import tempfile
 import time
@@ -63,6 +71,52 @@ def _plugin_install():
 
 
 BIND_TOOLS = ("Write", "Edit", "MultiEdit")
+# Subcommands of the ledger CLI that change the file (scripts/ledger.py).
+LEDGER_WRITE_CMDS = ("mark", "note", "add", "defer")
+_SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
+
+
+def ledger_cli_targets(command):
+    """Ledger paths named by `ledger <write-subcommand> -f PATH` calls in a
+    Bash command line (also `--file PATH`, `--file=PATH`, `-fPATH`, the
+    flag before or after the subcommand, `bin/ledger` or `ledger.py`).
+    Bare calls name no file and yield nothing; `ledger status` never
+    counts. Unparseable shell (unbalanced quotes) yields nothing."""
+    if not isinstance(command, str) or "ledger" not in command:
+        return []
+    try:
+        lex = shlex.shlex(command.replace("\n", " ; "), posix=True,
+                          punctuation_chars=";&|()")
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return []
+    targets = []
+    i = 0
+    while i < len(tokens):
+        name = os.path.basename(tokens[i])
+        if name not in ("ledger", "ledger.py"):
+            i += 1
+            continue
+        path, cmd = None, None
+        j = i + 1
+        while j < len(tokens) and tokens[j] not in _SHELL_SEPARATORS:
+            tok = tokens[j]
+            if tok in ("-f", "--file") and j + 1 < len(tokens):
+                path = tokens[j + 1]
+                j += 2
+                continue
+            if tok.startswith("--file="):
+                path = tok[len("--file="):]
+            elif tok.startswith("-f") and len(tok) > 2 and not tok.startswith("--"):
+                path = tok[2:]
+            elif cmd is None and not tok.startswith("-"):
+                cmd = tok
+            j += 1
+        if cmd in LEDGER_WRITE_CMDS and path:
+            targets.append(path)
+        i = j
+    return targets
 
 
 def _tool_failed(response):
@@ -97,7 +151,8 @@ def _bind(data):
     # Check the tool itself instead of trusting the hooks.json matcher
     # alone: only a successful Write/Edit/MultiEdit binds or recreates
     # a marker — a Read (or anything else) fed here is a no-op.
-    if data.get("tool_name") not in BIND_TOOLS:
+    tool_name = data.get("tool_name")
+    if tool_name not in BIND_TOOLS and tool_name != "Bash":
         return
     if _tool_failed(data.get("tool_response")):
         return
@@ -124,7 +179,20 @@ def _bind(data):
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
         return
-    file_path = tool_input.get("file_path")
+    if tool_name == "Bash":
+        # `ledger -f PATH <write>`: the last explicitly named ledger wins;
+        # a relative PATH is relative to the command's cwd.
+        targets = ledger_cli_targets(tool_input.get("command"))
+        if not targets:
+            return
+        file_path = os.path.expanduser(targets[-1])
+        if not os.path.isabs(file_path):
+            cwd = data.get("cwd")
+            if not isinstance(cwd, str) or not cwd:
+                return
+            file_path = os.path.join(cwd, file_path)
+    else:
+        file_path = tool_input.get("file_path")
     if not isinstance(file_path, str) or not file_path:
         return
 

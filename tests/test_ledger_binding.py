@@ -459,3 +459,137 @@ def test_ended_sessions_ledger_is_continued_only_by_an_edit(repo_dir, tmp_path):
     assert run_hook(SPAWN, spawn_payload(repo_dir, "s2"), tmpdir=tmp_path) is None
     result = run_hook(STOP, stop_payload(repo_dir, "s2"), tmpdir=tmp_path)
     assert result["decision"] == "block" and "a's item" in result["reason"]
+
+
+# --- 0.23.3: the ledger CLI binds; a binding survives SessionEnd + resume
+
+CLEANUP = "cleanup_session_cache.py"
+
+
+def bash_payload(repo, command, session_id="test-session", **extra):
+    payload = {"session_id": session_id, "tool_name": "Bash", "cwd": str(repo),
+               "tool_input": {"command": command},
+               "tool_response": {"stdout": "ok", "stderr": "", "interrupted": False}}
+    payload.update(extra)
+    return payload
+
+
+def test_ledger_cli_write_with_file_binds_like_an_edit(repo_dir, tmp_path):
+    ledger = _named_ledger(repo_dir, "LEDGER-cli.md")
+    real = os.path.realpath(str(ledger))
+    for cmd in (f'ledger -f {ledger} mark 1 "done"',
+                f"ledger note 1 'x' -f {ledger}",
+                f"ledger add 'new item' --file={ledger}",
+                f"ledger -f{ledger} defer 1 'later'",
+                f'cd /tmp && /some/plugin/bin/ledger --file "{ledger}" mark 1'):
+        write_marker(tmp_path, time.time())
+        assert run_hook(BIND, bash_payload(repo_dir, cmd), tmpdir=tmp_path) is None
+        assert marker(tmp_path)["ledger"] == real, cmd
+    # the bound session now passes the spawn gate
+    assert run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path) is None
+
+
+def test_ledger_cli_relative_file_resolves_against_cwd(repo_dir, tmp_path):
+    write_marker(tmp_path, time.time())
+    ledger = _named_ledger(repo_dir, "LEDGER-rel.md")
+    run_hook(BIND, bash_payload(repo_dir, "ledger -f .workflow/LEDGER-rel.md mark 1"),
+             tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(ledger))
+
+
+def test_ledger_cli_status_bare_and_other_commands_never_bind(repo_dir, tmp_path):
+    ledger = _named_ledger(repo_dir, "LEDGER-ro.md")
+    for cmd in (f"ledger -f {ledger} status",       # read-only
+                "ledger mark 1",                      # bare: names no file
+                f"cat {ledger}",                      # not the CLI
+                ):
+        write_marker(tmp_path, time.time())
+        run_hook(BIND, bash_payload(repo_dir, cmd), tmpdir=tmp_path)
+        assert "ledger" not in marker(tmp_path), cmd
+    write_marker(tmp_path, time.time())
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir), tmpdir=tmp_path))
+
+
+def test_ledger_cli_on_a_non_ledger_or_archived_file_never_binds(repo_dir, tmp_path):
+    archived = _named_ledger(repo_dir, "LEDGER-old-archive.md")
+    outside = tmp_path / "LEDGER-x.md"
+    outside.write_text("- [ ] 1. a\n", encoding="utf-8")
+    for path in (archived, outside, repo_dir / ".workflow" / "LEDGER-missing.md"):
+        write_marker(tmp_path, time.time())
+        run_hook(BIND, bash_payload(repo_dir, f"ledger -f {path} mark 1"), tmpdir=tmp_path)
+        assert "ledger" not in marker(tmp_path), path
+
+
+def test_subagent_ledger_cli_never_binds_the_chair(repo_dir, tmp_path):
+    write_marker(tmp_path, time.time())
+    ledger = _named_ledger(repo_dir, "LEDGER-sub.md")
+    run_hook(BIND, bash_payload(repo_dir, f"ledger -f {ledger} mark 1",
+                                agent_id="a1", agent_type="scout"), tmpdir=tmp_path)
+    assert "ledger" not in marker(tmp_path)
+
+
+def test_ledger_cli_rebinds_to_the_named_file(repo_dir, tmp_path):
+    first = _named_ledger(repo_dir, "LEDGER-a.md")
+    second = _named_ledger(repo_dir, "LEDGER-b.md")
+    write_marker(tmp_path, time.time(), ledger=os.path.realpath(str(first)))
+    run_hook(BIND, bash_payload(repo_dir, f"ledger -f {second} note 1 'x'"),
+             tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == os.path.realpath(str(second))
+
+
+def test_binding_survives_compact_and_the_spawn_gate_accepts_it(repo_dir, tmp_path):
+    env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    ledger = _named_ledger(repo_dir, "LEDGER-compact.md")
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session"},
+             env_extra=env, tmpdir=tmp_path)
+    run_hook(BIND, bash_payload(repo_dir, f"ledger -f {ledger} mark 1"),
+             env_extra=env, tmpdir=tmp_path)
+    out = run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session",
+                            "source": "compact"}, env_extra=env, tmpdir=tmp_path)
+    real = os.path.realpath(str(ledger))
+    assert f"Live ledger for this session: {real}" in \
+        out["hookSpecificOutput"]["additionalContext"]
+    assert run_hook(SPAWN, spawn_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+
+
+def test_binding_survives_session_end_and_resume(repo_dir, tmp_path):
+    # 10.10.2026: SessionEnd deleted the marker, the resumed session got a
+    # fresh one without `ledger`, and the spawn guard denied the chair.
+    env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    ledger = _named_ledger(repo_dir, "LEDGER-resume.md")
+    real = os.path.realpath(str(ledger))
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session"},
+             env_extra=env, tmpdir=tmp_path)
+    run_hook(BIND, bind_payload("test-session", ledger), env_extra=env, tmpdir=tmp_path)
+    run_hook(CLEANUP, {"session_id": "test-session"}, env_extra=env, tmpdir=tmp_path)
+    assert marker(tmp_path) is None
+    out = run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session",
+                            "source": "resume"}, env_extra=env, tmpdir=tmp_path)
+    assert marker(tmp_path)["ledger"] == real
+    assert f"Live ledger for this session: {real}" in \
+        out["hookSpecificOutput"]["additionalContext"]
+    assert not (tmp_path / "fable-orch-binding-test-session.json").exists()  # consumed
+    assert run_hook(SPAWN, spawn_payload(repo_dir), env_extra=env, tmpdir=tmp_path) is None
+
+
+def test_stashed_binding_is_never_adopted_by_another_session(repo_dir, tmp_path):
+    env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    ledger = _named_ledger(repo_dir, "LEDGER-mine.md")
+    write_marker(tmp_path, time.time(), session="s-old", ledger=os.path.realpath(str(ledger)))
+    run_hook(CLEANUP, {"session_id": "s-old"}, env_extra=env, tmpdir=tmp_path)
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "s-new",
+                      "source": "startup"}, env_extra=env, tmpdir=tmp_path)
+    assert "ledger" not in marker(tmp_path, "s-new")
+    assert _is_deny(run_hook(SPAWN, spawn_payload(repo_dir, session_id="s-new"),
+                             env_extra=env, tmpdir=tmp_path))
+
+
+def test_stashed_binding_to_an_archived_ledger_is_dropped(repo_dir, tmp_path):
+    env = {"CLAUDE_PLUGIN_ROOT": str(REPO)}
+    ledger = _named_ledger(repo_dir, "LEDGER-gone.md")
+    write_marker(tmp_path, time.time(), ledger=os.path.realpath(str(ledger)))
+    run_hook(CLEANUP, {"session_id": "test-session"}, env_extra=env, tmpdir=tmp_path)
+    ledger.rename(ledger.with_name("LEDGER-gone-archive.md"))
+    run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session",
+                      "source": "resume"}, env_extra=env, tmpdir=tmp_path)
+    assert "ledger" not in marker(tmp_path)

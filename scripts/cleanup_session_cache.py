@@ -296,6 +296,33 @@ def sweep_stale_swarms(max_idle_h, deadline):
     return killed
 
 
+def _stash_binding(session_id):
+    """Keep this session's ledger binding across SessionEnd (0.23.3).
+
+    SessionEnd deletes the marker, but the same session_id comes back on
+    `claude --resume` / an app restart, and its fresh marker had no
+    `ledger` key — the chair was silently unbound and the spawn guard
+    denied its next delegation (10.10.2026). The binding alone is
+    stashed in `fable-orch-binding-<sid>.json` (same temp dir, same 96 h
+    age sweep); the injector restores it for THIS session id only, so
+    it is never adoption by recency (0.22.0 rule)."""
+    marker = _tmp_json("fable-orch-model", session_id)
+    stash = _tmp_json("fable-orch-binding", session_id)
+    if not marker or not stash or not os.path.isfile(marker):
+        return
+    try:
+        with open(marker, encoding="utf-8") as f:
+            ledger = json.load(f).get("ledger")
+        if not isinstance(ledger, str) or not ledger:
+            return
+        tmp = f"{stash}.{os.getpid()}.tmp.json"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"ledger": ledger, "ts": round(time.time(), 3)}, f)
+        os.replace(tmp, stash)
+    except Exception:
+        pass
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -305,6 +332,7 @@ def main():
         data = {}
 
     session_id = data.get("session_id")
+    _stash_binding(session_id)
     for prefix in ("fable-orch-model", "fable-orch-stop", "fable-orch-tasks",
                    "fable-orch-reads"):
         path = _tmp_json(prefix, session_id)

@@ -46,9 +46,10 @@ ALWAYS PASSES, no matter how cold or how large:
 SKIPPED SILENTLY (no output, no marker write): submissions the harness
 makes on its own — background task notifications, subagent hand-backs /
 peer messages, local-command echoes, usage-limit and compaction notices,
-and scheduled wakeups (/loop, ScheduleWakeup, CronCreate; matched against
+scheduled wakeups (/loop, ScheduleWakeup, CronCreate; matched against
 the `wake_prompts` the Stop hook copies from `session_crons`, see
-`is_scheduled_wakeup`).
+`is_scheduled_wakeup`), and cross-session deliveries (a SendMessage from
+another session, see `is_cross_session_delivery`).
 Claude Code routes them through UserPromptSubmit like a typed prompt,
 but no human is waiting on them, so a block would eat a worker's report
 and a warning would nag about a cost nobody chose. See
@@ -561,6 +562,28 @@ def is_scheduled_wakeup(marker, prompt):
     return False
 
 
+# --- cross-session deliveries (SendMessage between sessions) ---------
+
+# Harness frames of a message from another Claude Code session, by
+# LEADING text. A SendMessage to an idle child arrives wrapped as
+# `<cross-session-message from="uds:..." from-name=".." from-mode="..">`;
+# the idle/delivery notices are the harness's own status frames. No
+# human can "resend" any of them: a block silently drops the brief
+# (10.10.2026: a child idle ~75 min never received its brief).
+CROSS_SESSION_PREFIXES = (
+    "<cross-session-message",
+    "[Cross-session idle notice]",
+    "[Cross-session delivery notice]",
+)
+
+
+def is_cross_session_delivery(prompt):
+    """True when `prompt` is a message or notice delivered from another
+    session. Leading-only, like NON_HUMAN_PREFIXES: a human prompt that
+    mentions the frame mid-text still counts."""
+    return prompt.startswith(CROSS_SESSION_PREFIXES)
+
+
 # --- the guard --------------------------------------------------------
 
 def run_guard(data):
@@ -575,6 +598,12 @@ def run_guard(data):
     # leave `last_prompt` alone — the Stop hook stamps `last_stop` when
     # the turn they trigger ends.
     if is_non_human_prompt(data, prompt):
+        return
+
+    # A SendMessage from another session (or its idle/delivery notice):
+    # nobody can resend it, a block drops it. Skip like a scheduled
+    # wakeup — no output, no marker write.
+    if is_cross_session_delivery(prompt):
         return
 
     session_id = data.get("session_id")

@@ -67,9 +67,10 @@ def test_posttooluse_matcher_covers_ledger_bind():
     matcher = _matcher_for("PostToolUse", "Write")
     assert matcher is not None, "no PostToolUse matcher covers Write"
     pattern = re.compile(matcher)
-    for tool in ("Write", "Edit", "MultiEdit"):
+    # Bash since 0.23.3: `ledger -f PATH mark|note|add|defer` binds too.
+    for tool in ("Write", "Edit", "MultiEdit", "Bash"):
         assert pattern.search(tool), f"matcher misses {tool}"
-    for tool in ("Read", "Bash", "NotebookEdit", "MultiEditX"):
+    for tool in ("Read", "NotebookEdit", "MultiEditX", "BashOutput"):
         assert not pattern.search(tool), f"matcher over-matches {tool}"
 
 
