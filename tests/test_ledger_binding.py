@@ -13,6 +13,8 @@ import json
 import os
 import time
 
+import pytest
+
 from conftest import POSIX, REPO, run_hook, write_ledger, write_marker
 
 BIND = "ledger_bind.py"
@@ -593,3 +595,36 @@ def test_stashed_binding_to_an_archived_ledger_is_dropped(repo_dir, tmp_path):
     run_hook(INJECT, {"model": "claude-fable-5", "session_id": "test-session",
                       "source": "resume"}, env_extra=env, tmpdir=tmp_path)
     assert "ledger" not in marker(tmp_path)
+
+
+# --- 0.23.5: Windows paths in `ledger -f` survive the Bash parser
+
+def _ledger_bind_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ledger_bind_under_test", REPO / "scripts" / "ledger_bind.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("path", [r"C:\Users\x\LEDGER-a.md", "C:/Users/x/LEDGER-a.md"])
+@pytest.mark.parametrize("template", [
+    "ledger -f {p} mark 1 'done'",
+    'ledger -f "{p}" mark 1',
+    "ledger note 1 'x' -f '{p}'",
+    "ledger add 'new' --file={p}",
+    "ledger -f{p} defer 1 'later'",
+    "cd C:/tmp && /plugin/bin/ledger --file {p} mark 1",
+])
+def test_ledger_cli_targets_keeps_windows_paths(path, template):
+    targets = _ledger_bind_module().ledger_cli_targets(
+        template.format(p=path), windows=True)
+    assert targets == [path]
+
+
+def test_ledger_cli_targets_posix_keeps_escape_semantics():
+    mod = _ledger_bind_module()
+    assert mod.ledger_cli_targets(r"ledger -f a\ b/LEDGER-x.md mark 1",
+                                  windows=False) == ["a b/LEDGER-x.md"]
+    assert mod.ledger_cli_targets("ledger -f /r/LEDGER-x.md status", windows=True) == []

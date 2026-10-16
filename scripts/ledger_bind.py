@@ -76,18 +76,27 @@ LEDGER_WRITE_CMDS = ("mark", "note", "add", "defer")
 _SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
 
 
-def ledger_cli_targets(command):
+def ledger_cli_targets(command, windows=None):
     """Ledger paths named by `ledger <write-subcommand> -f PATH` calls in a
     Bash command line (also `--file PATH`, `--file=PATH`, `-fPATH`, the
     flag before or after the subcommand, `bin/ledger` or `ledger.py`).
     Bare calls name no file and yield nothing; `ledger status` never
-    counts. Unparseable shell (unbalanced quotes) yields nothing."""
+    counts. Unparseable shell (unbalanced quotes) yields nothing.
+
+    `windows` (default: os.name == "nt") turns off backslash escaping:
+    POSIX shlex ate the separators of an unquoted `C:\\Users\\x\\LEDGER.md`
+    and the mangled path never matched a file (0.23.5). Quotes still
+    group and are stripped."""
     if not isinstance(command, str) or "ledger" not in command:
         return []
+    if windows is None:
+        windows = os.name == "nt"
     try:
         lex = shlex.shlex(command.replace("\n", " ; "), posix=True,
                           punctuation_chars=";&|()")
         lex.whitespace_split = True
+        if windows:
+            lex.escape = ""
         tokens = list(lex)
     except ValueError:
         return []
