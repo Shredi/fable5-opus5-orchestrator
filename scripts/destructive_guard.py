@@ -250,7 +250,7 @@ def _split_segments(text):
     """Split a command line into command segments on unquoted `;`, `|`,
     `||`, `&&`, `&` and newlines. Quote-aware by hand rather than by
     regex: the whole point is that `echo "a; rm -rf /"` is ONE segment
-    (an echo) while `a; rm -rf /` is two."""
+    (an echo) while `a; rm -rf /` is two. Heredoc bodies are split like any other text."""
     segs, buf = [], []
     quote = None
     i, n = 0, len(text)
@@ -279,6 +279,10 @@ def _split_segments(text):
         if c in ";\n":
             segs.append("".join(buf))
             buf = []
+            i += 1
+            continue
+        if c == "&" and buf and buf[-1] in "<>" and re.match(r"[0-9-]", text[i + 1:i + 2]):
+            buf.append(c)  # `2>&1`: an fd duplication, no command separator
             i += 1
             continue
         if c in "&|":

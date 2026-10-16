@@ -412,3 +412,26 @@ def test_deny_and_ask_emit_metrics(tmp_path):
     assert set(events) == {"destructive_deny", "destructive_ask"}
     assert events["destructive_deny"]["kind"]
     assert events["destructive_deny"]["cmd_head"] == INCIDENT[:60]
+
+
+# --- heredoc bodies and fd duplication ---------------------------------------
+
+@pytest.mark.parametrize("command", [
+    "cat <<'EOT'\nnotes\nrm -rf $x\nEOT",
+    "bash <<'EOF'\nrm -rf \"$x\"/*\nEOF",
+    "cat <<EOF | bash\nrm -rf \"$x\"/*\nEOF",
+    "cat <<'EOF' | grep x\nrm -rf \"$x\"/*\nEOF",
+    "cat <<'EOT'\nprose\nEOT\nrm -rf $x",
+    "rm -rf $x; cat <<'EOT'\nprose\nEOT",
+    "cat <<A > x.sh\nrm -rf \"$x\"/*\nA\nbash x.sh",
+    "echo $((1<<2))\nrm -rf \"$x\"/*",
+    "cat <<A\nrm -rf \"$x\"/*",
+])
+def test_heredoc_bodies_are_scanned_like_any_shell_text(command):
+    assert decide(command)[0] == "deny"
+
+
+def test_fd_duplication_is_no_command_separator():
+    assert decide("ls 2>&1")[0] == "allow"
+    assert decide("ls 2>&1; rm -rf $x")[0] == "deny"
+    assert decide("ls >&2 && rm -rf $x")[0] == "deny"
